@@ -48,6 +48,41 @@ Hey Mic is a Chrome extension that enables hands-free voice interaction with you
 - Open Admin Panel (opens controls in a separate popup window)
 - Highlight DOM/HTML (toggles visual grid, element outlines, and DOM lift on the current page)
 
+## Admin Panel Screenshot
+
+This is the Admin panel where you can manage widgets like the mic, tab utilities, and the DOM highlighter.
+
+![Admin Panel](docs/screenshots/admin-panel.png)
+
+Key areas to note:
+- Widget 8: Highlight HTML/DOM Layout — controls enabling/disabling the overlay for a specific tab.
+- Widget 3: Supported Voice Commands — quick reference for tab and navigation commands.
+- Global mic and tab helpers — open URLs, list tabs, and switch by ID.
+
+## Highlight HTML/DOM Layout
+
+The HTML/DOM Highlighter overlays a grid and element outlines on the current page to help you inspect structure and capture context for the assistant.
+
+![DOM Highlight Overlay](<docs/screenshots/HTML_DOM hightlighted und pin panel available.png>)
+
+What it does
+- Draws a responsive grid and outlines around DOM blocks to visualize layout structure.
+- Displays an on-page toolbar with actions like `Pin` and content tools.
+- Provides a "Lift" indicator showing how much of the current view or selection has been lifted into a clean semantic snippet for the assistant.
+
+Pinning and lifting
+- Pin: Locks the current region so the overlay and controls stay anchored while you scroll or interact elsewhere.
+- Lift HTML: Extracts a simplified semantic HTML snapshot of the pinned/selected region. This lifted snippet is what the assistant uses for summarization or follow-up actions.
+- Summarize: Sends the lifted HTML to the assistant (e.g., "Summarize this") so you can quickly get a high-level explanation of the selected component.
+
+How to use from Admin
+1. Open the Admin Panel (right‑click the Hey Mic icon → Admin Panel).
+2. In "Widget 8: Highlight HTML/DOM Layout", click `Enable` to turn on overlays for the target tab.
+3. If needed, set or refresh the `Target Tab` (tab ID + title) and click `Refresh Target`.
+4. On the target page, use the floating controls to `Pin` regions, view the `Lift` status, and trigger actions like `Summarize`.
+
+Note: The screenshots referenced above should be added to `docs/screenshots/` with the filenames `admin-panel.png` and `highlight-dom-grid.png`.
+
 ## Requirements
 
 - Chrome Browser with support for Manifest V3 and the Web Speech API.
