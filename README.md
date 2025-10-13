@@ -141,6 +141,10 @@ File changes in this update
 
 Enjoy hands-free browsing with Hey Mic!
 
+## License
+
+MIT License. See `LICENSE` for details.
+
 ## How to Add Voice Commands
 
 - Edit `voice_commands.js` only. Add a new entry to the array returned by `getCommandRegistry(ctx)` with:
