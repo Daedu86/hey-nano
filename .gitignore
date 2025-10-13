@@ -3,8 +3,8 @@ node_modules/
 
 # IDE/editor
 .vscode/
+chrome-devtools-mcp/
 
 # OS
 Thumbs.db
 Desktop.ini
-
