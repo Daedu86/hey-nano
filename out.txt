@@ -1,0 +1,9 @@
+    console.log("Assistant:", text);
+    try {
+      chrome.runtime.sendMessage({
+        event: 'llm',
+        text,
+        ts: Date.now(),
+        tokens: estimateTokens(text),
+        chars: text.length
+      });

@@ -1,0 +1,58 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hey Mic Admin</title>
+    <link rel="stylesheet" href="admin_popup.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>Hey Mic Admin</h1>
+        <div class="controls">
+          <button id="toggleMic" class="btn">Enable Mic</button>
+          <span id="micBadge" class="status-badge off">OFF</span>
+          <div class="hint">Shortcut: Alt+Shift+M · change in chrome://extensions/shortcuts</div>
+        </div>
+      </header>
+
+      <section>
+        <h2>Open Tab</h2>
+        <form id="openForm">
+          <input id="urlInput" type="text" placeholder="https://example.com or example.com" />
+          <button type="submit" class="btn">Open</button>
+        </form>
+      </section>
+
+      <section>
+        <h2>List Tabs</h2>
+        <button id="listTabs" class="btn">List</button>
+        <div id="tabsOut" class="tabs-list"></div>
+      </section>
+
+      <section>
+        <h2>Global Off</h2>
+        <button id="disableAll" class="btn btn-secondary">Turn off Hey Mic on all tabs</button>
+      </section>
+
+      <section>
+        <h2>Assistant Behavior</h2>
+        <div class="subhead">System Prompt</div>
+        <pre id="sysPrompt" class="mono"></pre>
+        <div class="subhead">Supported Voice Commands</div>
+        <table id="cmdTable" class="cmd-table" aria-label="Supported Voice Commands">
+          <thead>
+            <tr>
+              <th>Action</th>
+              <th>Triggers</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+    </div>
+    <script src="admin_popup.js"></script>
+  </body>
+  </html>

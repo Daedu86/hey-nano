@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hey Mic</title>
+    <link rel="stylesheet" href="user_popup.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>Hey Mic</h1>
+        <div class="controls">
+          <button id="toggleMic" class="btn" aria-pressed="false">Enable Mic</button>
+          <span id="micBadge" class="status-badge off">OFF</span>
+        </div>
+      </header>
+
+      <section>
+        <div id="chat" class="chat"></div>
+      </section>
+
+      <footer>
+        <div id="contextInfo" class="hint">Live: your speech and assistant replies appear here.</div>
+      </footer>
+    </div>
+    <script src="user_popup.js"></script>
+  </body>
+  </html>

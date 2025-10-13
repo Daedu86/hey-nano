@@ -1,0 +1,142 @@
+:root {
+  --bg: #121212;
+  --fg: #f1f1f1;
+  --muted: #b9b9b9;
+  --accent: #1e9e3f;
+  --btn-bg: #232323;
+  --btn-border: #3a3a3a;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+.container { width: 720px; max-width: 720px; padding: 12px; }
+
+h1 { font-size: 16px; margin: 0; }
+h2 { font-size: 13px; color: var(--muted); margin: 14px 0 8px; font-weight: 600; }
+
+header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.controls { display: flex; align-items: center; gap: 10px; }
+.hint { color: var(--muted); font-size: 11px; }
+.status-badge { display: inline-block; padding: 2px 6px; border-radius: 999px; font-size: 11px; font-weight: 700; border: 1px solid transparent; }
+.status-badge.on { background: var(--accent); color: #0a230f; border-color: #0b6124; }
+.status-badge.off { background: #2a2a2a; color: var(--muted); border-color: #3a3a3a; }
+
+.btn {
+  background: var(--btn-bg);
+  border: 1px solid var(--btn-border);
+  color: var(--fg);
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.btn:hover { border-color: var(--accent); }
+.btn[aria-pressed="true"] { background: #173a22; border-color: var(--accent); color: #d7ffd7; }
+.btn-secondary { background: #1b1b1b; }
+
+form { display: flex; gap: 6px; }
+input[type="text"] {
+  flex: 1;
+  background: #1a1a1a;
+  border: 1px solid var(--btn-border);
+  color: var(--fg);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.output {
+  background: #0e0e0e;
+  border: 1px solid #242424;
+  padding: 8px;
+  border-radius: 6px;
+  max-height: 120px;
+  overflow: auto;
+}
+
+/* Improved tabs list: wrapped, readable, scrollable */
+.tabs-list {
+  background: #0e0e0e;
+  border: 1px solid #242424;
+  border-radius: 6px;
+  max-height: 240px;
+  overflow: auto;
+  padding: 6px;
+}
+
+.tab-row {
+  padding: 6px 4px;
+  border-bottom: 1px dashed #2a2a2a;
+}
+.tab-row:last-child { border-bottom: none; }
+
+.tab-id {
+  color: var(--muted);
+  font-size: 12px;
+}
+.tab-title {
+  margin: 2px 0 2px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.tab-url {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+.mono {
+  background: #0e0e0e;
+  border: 1px solid #242424;
+  padding: 8px;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.subhead { color: var(--muted); font-size: 12px; margin: 10px 0 4px; }
+.cmd-table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 12px; }
+.cmd-table th, .cmd-table td { border: 1px solid #242424; padding: 6px; vertical-align: top; }
+.cmd-table th { background: #1a1a1a; color: var(--muted); text-align: left; }
+.cmd-table td { background: #0e0e0e; }
+.cmd-table td .trigger { display: inline-block; background: #1b1b1b; border: 1px solid #2a2a2a; border-radius: 4px; padding: 2px 6px; margin: 2px 4px 2px 0; color: #ddd; }
+
+/* Grid layout 8x8 */
+.sr-only { position: absolute; left: -9999px; top: -9999px; }
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-auto-rows: minmax(40px, auto);
+  gap: 10px;
+}
+.tile {
+  grid-column: span 1;
+  background: #0e0e0e;
+  border: 1px solid #242424;
+  border-radius: 8px;
+  box-shadow: 0 6px 14px rgba(0,0,0,0.35);
+}
+.tile[draggable="true"] { cursor: move; }
+.tile.dragging { opacity: 0.6; }
+.tile-head { font-weight: 700; padding: 8px 10px; border-bottom: 1px dashed #2a2a2a; color: var(--muted); user-select: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tile-head .tile-title-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile-copy-btn { background: transparent; border: 1px solid #2a2a2a; color: var(--muted); padding: 2px 6px; border-radius: 6px; cursor: pointer; font-size: 11px; }
+.tile-copy-btn:hover { border-color: var(--accent); color: #d7ffd7; }
+.tile-body { padding: 10px; }
+
+/* Optional: allow narrower tiles in future using data-colspan */
+[data-colspan="1"] { grid-column: span 1; }
+[data-colspan="2"] { grid-column: span 2; }
+[data-colspan="3"] { grid-column: span 3; }
+
+@media (max-width: 640px) {
+  .container { width: 320px; max-width: 100%; }
+  .grid { grid-template-columns: repeat(1, 1fr); }
+  .tile { grid-column: span 1; }
+}

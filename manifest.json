@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "Hey Mic",
+  "version": "1.0",
+  "description": "Activates mic on 'hey mic' and logs speech to console (only active tab).",
+  "permissions": ["scripting", "activeTab", "tabs", "contextMenus", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "user_popup.html",
+        "user_popup.css",
+        "user_popup.js"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "action": {
+    "default_title": "Hey Mic"
+  },
+  "commands": {
+    "toggle-mic": {
+      "suggested_key": {
+        "default": "Alt+Shift+M"
+      },
+      "description": "Toggle Hey Mic on current tab"
+    }
+  }
+}
