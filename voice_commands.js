@@ -1,8 +1,8 @@
 // Voice command microservice: parsing + helpers
-// Exposes window.HeyMicCommands with pure functions used by content.js
+// Exposes window.HeyNanoCommands with pure functions used by content.js
 
 (function () {
-  if (window.HeyMicCommands) return;
+  if (window.HeyNanoCommands) return;
 
   /**
    * normalizeTabCommand
@@ -166,7 +166,7 @@
   }
 
   // Public API
-  // Title: HeyMicCommands — Voice command helpers used across the extension
+  // Title: HeyNanoCommands — Voice command helpers used across the extension
   // Description: Pure functions for parsing and normalizing voice commands
   function getCommandRegistry(ctx) {
     return [
@@ -316,7 +316,7 @@
     }
   }
 
-  window.HeyMicCommands = {
+  window.HeyNanoCommands = {
     normalizeTabCommand,
     isStopCommand,
     isListTabs,

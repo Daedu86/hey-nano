@@ -1,5 +1,5 @@
 (function () {
-  if (window.HeyMicSpeech) return;
+  if (window.HeyNanoSpeech) return;
 
   function createSTT(opts = {}) {
     const provider = (opts.provider || 'web-speech').toLowerCase();
@@ -101,7 +101,7 @@
     throw new Error(`TTS provider '${provider}' not implemented. See README for integration notes.`);
   }
 
-  window.HeyMicSpeech = {
+  window.HeyNanoSpeech = {
     // STT
     createSTT,
     // TTS

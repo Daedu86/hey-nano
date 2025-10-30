@@ -125,6 +125,7 @@ input[type="text"] {
 .tile[draggable="true"] { cursor: move; }
 .tile.dragging { opacity: 0.6; }
 .tile-head { font-weight: 700; padding: 8px 10px; border-bottom: 1px dashed #2a2a2a; color: var(--muted); user-select: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tile-head .tile-number { font-size: 11px; font-weight: 700; color: var(--accent); margin-right: 8px; flex-shrink: 0; }
 .tile-head .tile-title-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tile-copy-btn { background: transparent; border: 1px solid #2a2a2a; color: var(--muted); padding: 2px 6px; border-radius: 6px; cursor: pointer; font-size: 11px; }
 .tile-copy-btn:hover { border-color: var(--accent); color: #d7ffd7; }

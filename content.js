@@ -1,10 +1,10 @@
 // Guard against duplicate injection
 (function () {
-if (window.__heyMicLoaded) {
-  console.log("Hey Mic already loaded.");
+if (window.__heyNanoLoaded) {
+  console.log("Hey Nano already loaded.");
   return;
 }
-window.__heyMicLoaded = true;
+window.__heyNanoLoaded = true;
 
 let sttEngine = null;
 let recognition = null; // fallback for legacy Web Speech path
@@ -93,7 +93,7 @@ function createDomGridOverlay(opts = {}) {
       backgroundRepeat: 'repeat',
     });
     document.documentElement.appendChild(el);
-    try { console.log('Hey Mic: DOM grid enabled', { size, color, colorBold }); } catch {}
+    try { console.log('Hey Nano: DOM grid enabled', { size, color, colorBold }); } catch {}
   } catch (e) {}
 }
 
@@ -101,7 +101,7 @@ function removeDomGridOverlay() {
   try {
     const el = document.getElementById('hey-mic-dom-grid');
     if (el && el.parentNode) el.parentNode.removeChild(el);
-    try { console.log('Hey Mic: DOM grid disabled'); } catch {}
+    try { console.log('Hey Nano: DOM grid disabled'); } catch {}
   } catch (e) {}
 }
 
@@ -124,9 +124,9 @@ function enableDomHighlights() {
     // Log findings similar to a button finder demo
     const divs = document.querySelectorAll('div');
     const buttons = document.querySelectorAll('button, input[type="button"], input[type="submit"], [role="button"], a[role="button"]');
-    console.log('Hey Mic: DOM highlight enabled');
-    console.log('Hey Mic: findButtons() ->', Array.from(buttons));
-    console.log(`Hey Mic: highlighted ${divs.length} <div> elements and ${buttons.length} button-like elements.`);
+    console.log('Hey Nano: DOM highlight enabled');
+    console.log('Hey Nano: findButtons() ->', Array.from(buttons));
+    console.log(`Hey Nano: highlighted ${divs.length} <div> elements and ${buttons.length} button-like elements.`);
   } catch (e) {}
 }
 
@@ -134,7 +134,7 @@ function disableDomHighlights() {
   try {
     const style = document.getElementById('hey-mic-dom-highlight-style');
     if (style && style.parentNode) style.parentNode.removeChild(style);
-    console.log('Hey Mic: DOM highlight disabled');
+    console.log('Hey Nano: DOM highlight disabled');
   } catch (e) {}
 }
 
@@ -262,7 +262,7 @@ function enableDomLift() {
     } catch {}
   };
   document.addEventListener('keydown', domLift.keyHandler, true);
-  try { console.log('Hey Mic: DOM lift enabled (hover to spotlight elements)'); } catch {}
+  try { console.log('Hey Nano: DOM lift enabled (hover to spotlight elements)'); } catch {}
 }
 
 function disableDomLift() {
@@ -290,7 +290,7 @@ function disableDomLift() {
     domLift.keyHandler = null;
   }
   // Keep CSS style to avoid flicker on re-enable; remove only if desired
-  try { console.log('Hey Mic: DOM lift disabled'); } catch {}
+  try { console.log('Hey Nano: DOM lift disabled'); } catch {}
   hideSummarizeBtn();
   hideBlackPad();
 }
@@ -367,7 +367,7 @@ function ensureSummarizeBtn() {
       if (!el) return;
       const text = extractSummarizableText(el);
       if (!text) {
-        console.log('Hey Mic: No textual content to summarize for current element.');
+        console.log('Hey Nano: No textual content to summarize for current element.');
         return;
       }
       // Log a user-style event for visibility in the popup
@@ -376,7 +376,7 @@ function ensureSummarizeBtn() {
       } catch {}
       await summarizeTextWithLLM(text);
     } catch (err) {
-      console.warn('Hey Mic summarize failed:', err);
+      console.warn('Hey Nano summarize failed:', err);
     }
   });
   // Decrease / Increase controls (adjust lift scale)
@@ -527,7 +527,7 @@ function togglePinCurrent() {
   }
   if (pinBtnEl) pinBtnEl.textContent = isPinned(el) ? 'Unpin' : 'Pin';
   updateSummarizeBtn(el);
-  try { console.log('Hey Mic: DOM lift', isPinned(el) ? 'pinned' : 'unpinned'); } catch {}
+  try { console.log('Hey Nano: DOM lift', isPinned(el) ? 'pinned' : 'unpinned'); } catch {}
 }
 
 function pinElement(el) {
@@ -540,7 +540,7 @@ function pinElement(el) {
     try {
       const cs = getComputedStyle(el);
       if (cs && cs.position === 'static') {
-        el.dataset._heyMicPrevPos = el.style.position || '';
+        el.dataset._heyNanoPrevPos = el.style.position || '';
         el.style.position = 'relative';
       }
     } catch {}
@@ -558,9 +558,9 @@ function unpinElement(el) {
     const meta = domLift.pinned ? domLift.pinned.get(el) : null;
     // Restore element inline position if changed
     try {
-      if (el.dataset && Object.prototype.hasOwnProperty.call(el.dataset, '_heyMicPrevPos')) {
-        el.style.position = el.dataset._heyMicPrevPos || '';
-        delete el.dataset._heyMicPrevPos;
+      if (el.dataset && Object.prototype.hasOwnProperty.call(el.dataset, '_heyNanoPrevPos')) {
+        el.style.position = el.dataset._heyNanoPrevPos || '';
+        delete el.dataset._heyNanoPrevPos;
       }
     } catch {}
     restoreElementPositioning(el, meta && meta.savedStyle);
@@ -716,7 +716,7 @@ function enableElementDrag(el) {
     applyFixedPositioning(el);
     el.addEventListener('mousedown', onDown, true);
     // Store handlers for cleanup
-    el.__heyMicDragHandlers = { onDown, onMove, onUp };
+    el.__heyNanoDragHandlers = { onDown, onMove, onUp };
   } catch {}
 }
 
@@ -724,11 +724,11 @@ function disableElementDrag(el) {
   if (!el) return;
   try {
     domLift.dragActive = false;
-    const h = el.__heyMicDragHandlers || {};
+    const h = el.__heyNanoDragHandlers || {};
     if (h.onDown) el.removeEventListener('mousedown', h.onDown, true);
     document.removeEventListener('mousemove', h.onMove, true);
     document.removeEventListener('mouseup', h.onUp, true);
-    delete el.__heyMicDragHandlers;
+    delete el.__heyNanoDragHandlers;
   } catch {}
 }
 
@@ -742,7 +742,7 @@ function setLiftScaleLocal(v) {
   domLiftScaleLocal = Math.max(1.0, Math.min(2.5, Number(v) || 1.15));
   try {
     document.documentElement.style.setProperty('--hey-mic-lift-scale', String(domLiftScaleLocal));
-    console.log('Hey Mic: DOM lift scale set (local)', domLiftScaleLocal);
+    console.log('Hey Nano: DOM lift scale set (local)', domLiftScaleLocal);
   } catch {}
   updateScaleLabel();
 }
@@ -779,14 +779,13 @@ function hideBlackPad() {
   blackPadEl = null;
 }
 
-// Surprise Me HTML: scramble/restore visible text nodes and shuffle/restore DOM
-let surpriseState = {
+const layoutPlayground = {
   enabled: false,
   // text scrambling
   nodes: new Set(),
-  map: new WeakMap(),
+  originals: new WeakMap(),
   // DOM shuffling
-  domOrder: new WeakMap(), // Element -> original children array
+  domOrder: new WeakMap(), // Element -> original children array snapshot
   domContainers: new Set(),
 };
 
@@ -823,39 +822,48 @@ function scrambleAllText(root) {
     let node;
     while ((node = walker.nextNode())) {
       if (!isEligibleTextNode(node)) continue;
-      if (!surpriseState.map.has(node)) {
-        surpriseState.map.set(node, node.nodeValue);
-        surpriseState.nodes.add(node);
+      const original = node.nodeValue || '';
+      if (!layoutPlayground.originals.has(node)) {
+        layoutPlayground.originals.set(node, original);
+        layoutPlayground.nodes.add(node);
       }
-      node.nodeValue = scrambleText(surpriseState.map.get(node));
+      node.nodeValue = scrambleText(original);
     }
   } catch {}
 }
 
 function restoreAllText() {
   try {
-    surpriseState.nodes.forEach((node) => {
-      if (surpriseState.map.has(node)) node.nodeValue = surpriseState.map.get(node);
+    layoutPlayground.nodes.forEach((node) => {
+      const original = layoutPlayground.originals.get(node);
+      if (typeof original === 'string') node.nodeValue = original;
     });
   } catch {}
-  surpriseState.nodes.clear();
-  surpriseState.map = new WeakMap();
+  layoutPlayground.nodes.clear();
+  layoutPlayground.originals = new WeakMap();
 }
 
-function enableSurpriseHtml() {
-  // Allow repeated shuffles while enabled
-  if (!surpriseState.enabled) {
-    surpriseState.enabled = true;
+function enableLayoutShuffle({ scrambleText: includeText = false } = {}) {
+  layoutPlayground.enabled = true;
+  try {
+    if (includeText) scrambleAllText(document.body);
+    // Allow repeated shuffles while enabled; each call snapshots fresh order.
+    shuffleDom(document.body);
+  } catch (e) {
+    console.warn('Hey Nano: layout shuffle enable failed:', e);
   }
-  // Do NOT scramble text; only shuffle layout/children order for design exploration
-  shuffleDom(document.body);
 }
 
-function disableSurpriseHtml() {
-  if (!surpriseState.enabled) return;
-  // Only restore layout; text was not scrambled in this mode
-  restoreDom();
-  surpriseState.enabled = false;
+function disableLayoutShuffle({ restoreText: restoreTextContent = true } = {}) {
+  try {
+    // Only restore layout; text was not scrambled unless requested
+    restoreDom();
+    if (restoreTextContent) restoreAllText();
+  } catch (e) {
+    console.warn('Hey Nano: layout shuffle disable failed:', e);
+  } finally {
+    layoutPlayground.enabled = false;
+  }
 }
 
 // ---- DOM shuffle/restore (design mode) ----
@@ -897,8 +905,10 @@ function shuffleDom(root) {
     containers.forEach((el) => {
       const kids = Array.from(el.children);
       if (kids.length < 2) return;
-      if (!surpriseState.domOrder.has(el)) surpriseState.domOrder.set(el, kids);
-      surpriseState.domContainers.add(el);
+      if (!layoutPlayground.domOrder.has(el)) {
+        layoutPlayground.domOrder.set(el, kids.slice());
+        layoutPlayground.domContainers.add(el);
+      }
       const shuffled = shuffleArrayCopy(kids);
       shuffled.forEach((child) => el.appendChild(child));
     });
@@ -907,14 +917,17 @@ function shuffleDom(root) {
 
 function restoreDom() {
   try {
-    surpriseState.domContainers.forEach((el) => {
-      const orig = surpriseState.domOrder.get(el);
-      if (!orig || !orig.length) return;
-      orig.forEach((child) => { if (child && child.parentElement === el) el.appendChild(child); });
+    layoutPlayground.domContainers.forEach((el) => {
+      const original = layoutPlayground.domOrder.get(el);
+      if (!original || !original.length) return;
+      original.forEach((child) => {
+        if (!child) return;
+        try { el.appendChild(child); } catch {}
+      });
     });
   } catch {}
-  surpriseState.domContainers.clear();
-  surpriseState.domOrder = new WeakMap();
+  layoutPlayground.domContainers.clear();
+  layoutPlayground.domOrder = new WeakMap();
 }
 
 function extractSummarizableText(el, maxLen = 4000) {
@@ -944,7 +957,7 @@ async function summarizeTextWithLLM(text) {
     const prompt = `Summarize the following content succinctly in English. Use short bullet points when helpful.\n\nContent:\n"""\n${text}\n"""`;
     const result = await session.prompt([{ role: 'user', content: prompt }]);
     const summary = String(result || '').trim();
-    console.log('Hey Mic: Summary ->', summary);
+    console.log('Hey Nano: Summary ->', summary);
     try {
       chrome.runtime.sendMessage({ event: 'llm', text: summary, ts: Date.now(), tokens: estimateTokens(summary), chars: summary.length });
     } catch {}
@@ -1062,7 +1075,7 @@ async function askLayoutOpinion() {
     ].join('\n');
     const result = await session.prompt([{ role: 'user', content: prompt }]);
     const opinion = String(result || '').trim();
-    console.log('Hey Mic: Layout opinion ->', opinion);
+    console.log('Hey Nano: Layout opinion ->', opinion);
     try {
       chrome.runtime.sendMessage({ event: 'llm', text: opinion, ts: Date.now(), tokens: estimateTokens(opinion), chars: opinion.length });
     } catch {}
@@ -1122,7 +1135,7 @@ async function applyLayoutImprovements() {
     if (css) {
       applyCssImprovements(css);
       const msg = 'Applied AI CSS improvements (' + css.length + ' chars).';
-      console.log('Hey Mic:', msg); 
+      console.log('Hey Nano:', msg); 
       try { chrome.runtime.sendMessage({ event: 'llm', text: msg, ts: Date.now(), tokens: estimateTokens(msg), chars: msg.length }); } catch {}
     } else {
       console.warn('No CSS provided by LLM.');
@@ -1138,7 +1151,7 @@ function revertLayoutImprovements() {
     const style = document.getElementById('hey-mic-improve-style');
     if (style && style.parentNode) style.parentNode.removeChild(style);
     const msg = 'Reverted AI CSS improvements.';
-    console.log('Hey Mic:', msg);
+    console.log('Hey Nano:', msg);
     try { chrome.runtime.sendMessage({ event: 'llm', text: msg, ts: Date.now(), tokens: estimateTokens(msg), chars: msg.length }); } catch {}
   } catch (e) {
     console.warn('revertLayoutImprovements failed:', e);
@@ -1311,8 +1324,8 @@ async function initLLM() {
     // Build a snapshot of supported voice commands (title + description) once per session
     let cmdList = "";
     try {
-      const reg = (window.HeyMicCommands && window.HeyMicCommands.getCommandRegistry)
-        ? window.HeyMicCommands.getCommandRegistry()
+      const reg = (window.HeyNanoCommands && window.HeyNanoCommands.getCommandRegistry)
+        ? window.HeyNanoCommands.getCommandRegistry()
         : [];
       cmdList = (reg || [])
         .map((c) => `- ${c.title}: ${c.description}`)
@@ -1380,14 +1393,14 @@ function getPageText(maxLength = 5000) {
 }
 
 // Get reference to command helpers
-function Commands() { return window.HeyMicCommands || {}; }
+function Commands() { return window.HeyNanoCommands || {}; }
 
 function startMic() {
   if (micActive) return;
   // Prefer adapter-based STT if available
   try {
-    if (window.HeyMicSpeech && typeof window.HeyMicSpeech.createSTT === 'function') {
-      sttEngine = window.HeyMicSpeech.createSTT({ provider: 'web-speech', lang: 'en-US', continuous: true, interimResults: false });
+    if (window.HeyNanoSpeech && typeof window.HeyNanoSpeech.createSTT === 'function') {
+      sttEngine = window.HeyNanoSpeech.createSTT({ provider: 'web-speech', lang: 'en-US', continuous: true, interimResults: false });
       if (sttEngine) {
         micActive = true;
         console.log("Mic enabled. Speak...");
@@ -1485,7 +1498,7 @@ function startMic() {
   recognition = rec;
   micActive = true;
   console.log("Mic enabled. Speak...");
-  try { chrome.runtime.sendMessage({ event: 'system', type: 'mic', state: 'enabled', ts: Date.now() }); } catch (e) {}
+  try { chrome.runtime.sendMessage({ event: 'system', type: 'mic', state: 'enabled', ts: Date.now(), source: 'startMic' }); } catch (e) {}
 
   rec.onresult = async (e) => {
     let transcript = e.results[e.resultIndex][0].transcript.trim();
@@ -1581,7 +1594,7 @@ function stopMic() {
     recognition = null;
   }
   console.log("Mic stopped.");
-  try { chrome.runtime.sendMessage({ event: 'system', type: 'mic', state: 'disabled', ts: Date.now() }); } catch (e) {}
+  try { chrome.runtime.sendMessage({ event: 'system', type: 'mic', state: 'disabled', ts: Date.now(), source: 'stopMic' }); } catch (e) {}
   try { /* overlay disabled */ } catch {}
 }
 
@@ -1593,9 +1606,24 @@ chrome.runtime.onMessage.addListener((msg) => {
     });
   }
   if (msg.command === "stop") stopMic();
+  if (msg.command === "userTypedInput") {
+    const manualText = typeof msg.text === 'string' ? msg.text.trim() : '';
+    if (manualText) {
+      try {
+        chrome.runtime.sendMessage({
+          event: 'stt',
+          text: manualText,
+          ts: Date.now(),
+          tokens: estimateTokens(manualText),
+          chars: manualText.length
+        });
+      } catch (e) {}
+      initLLM().catch(() => {}).then(() => sendToLLM(manualText));
+    }
+  }
   // HTML/DOM LAYOUT grid toggle
   if (msg && msg.event === 'htmlDomLayout') {
-    try { console.log('Hey Mic: htmlDomLayout event', msg.state, msg.options || {}); } catch {}
+    try { console.log('Hey Nano: htmlDomLayout event', msg.state, msg.options || {}); } catch {}
     if (msg.state === 'enabled') {
       createDomGridOverlay(msg.options || {});
       enableDomHighlights();
@@ -1606,19 +1634,10 @@ chrome.runtime.onMessage.addListener((msg) => {
       disableDomLift();
     }
   }
-  // Surprise Me HTML: scramble/restore
-  if (msg && msg.event === 'surpriseHtml') {
-    try { console.log('Hey Mic: surpriseHtml event', msg.state); } catch {}
-    if (msg.state === 'enabled') {
-      enableSurpriseHtml();
-    } else if (msg.state === 'disabled') {
-      disableSurpriseHtml();
-    }
-  }
-  if (msg && msg.event === 'surpriseOpinion') {
+  if (msg && msg.event === 'layoutOpinion') {
     try { askLayoutOpinion(); } catch {}
   }
-  if (msg && msg.event === 'surpriseImprove') {
+  if (msg && msg.event === 'layoutAction') {
     try {
       if (msg.action === 'apply') {
         applyLayoutImprovements();
@@ -1631,7 +1650,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     const scale = Math.max(1.0, Math.min(2.5, Number(msg.scale) || 1.15));
     try {
       document.documentElement.style.setProperty('--hey-mic-lift-scale', String(scale));
-      console.log('Hey Mic: DOM lift scale set to', scale);
+      console.log('Hey Nano: DOM lift scale set to', scale);
     } catch {}
   }
 });

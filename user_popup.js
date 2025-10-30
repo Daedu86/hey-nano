@@ -13,10 +13,18 @@ function setMicBadge(enabled) {
 }
 
 function setMicButtonState(enabled) {
-  const btn = document.getElementById('toggleMic');
-  if (!btn) return;
-  btn.textContent = enabled ? 'Disable Mic' : 'Enable Mic';
-  btn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+  const toggle = document.getElementById('toggleMic');
+  if (toggle) {
+    if (toggle instanceof HTMLInputElement) {
+      toggle.checked = !!enabled;
+      toggle.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+    } else {
+      toggle.textContent = enabled ? 'Disable Mic' : 'Enable Mic';
+      toggle.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+    }
+  }
+  const label = document.querySelector('.toggle-label');
+  if (label) label.textContent = enabled ? 'Mic On' : 'Mic Off';
   setMicBadge(enabled);
 }
 
@@ -80,6 +88,74 @@ function incrementUsage(tokens, chars) {
   updateContextBanner();
 }
 
+async function toggleMicForTarget(desiredState) {
+  const toggle = document.getElementById('toggleMic');
+  const target = await getTargetTab();
+  if (!target) {
+    if (toggle instanceof HTMLInputElement) toggle.checked = !desiredState;
+    appendMsg('system', 'No active tab detected. Open a page and try again.', Date.now(), 0, 0);
+    return;
+  }
+  chrome.runtime.sendMessage({ command: 'getMicState', tabId: target.id }, (res) => {
+    const error = chrome.runtime.lastError;
+    if (error) {
+      appendMsg('system', `Unable to read mic state: ${error.message || error}`, Date.now(), 0, 0);
+      setMicButtonState(false);
+      return;
+    }
+    const enabled = !!res?.enabled;
+    if (enabled === desiredState) {
+      setMicButtonState(enabled);
+      return;
+    }
+    const command = desiredState ? 'enableMicForTab' : 'disableMicForTab';
+    chrome.runtime.sendMessage({ command, tabId: target.id }, () => {
+      const toggleError = chrome.runtime.lastError;
+      if (toggleError) {
+        appendMsg('system', `Mic toggle failed: ${toggleError.message || toggleError}`, Date.now(), 0, 0);
+        setMicButtonState(!desiredState);
+      }
+    });
+  });
+}
+
+async function submitComposerMessage() {
+  const input = document.getElementById('composerInput');
+  const sendBtn = document.getElementById('composerSend');
+  if (!input) return;
+  const text = (input.value || '').trim();
+  if (!text) return;
+
+  const target = await getTargetTab();
+  if (!target) {
+    appendMsg('system', 'No active tab detected. Open a page and try again.', Date.now(), 0, 0);
+    return;
+  }
+
+  if (sendBtn) sendBtn.disabled = true;
+  input.disabled = true;
+
+  try {
+    chrome.runtime.sendMessage({ command: 'typedInput', tabId: target.id, text }, (resp) => {
+      if (sendBtn) sendBtn.disabled = false;
+      input.disabled = false;
+      if (resp && resp.ok === false) {
+        appendMsg('system', 'Unable to send message. Please try again.', Date.now(), 0, 0);
+      } else {
+        setMicBadge(true);
+      }
+      if (resp && resp.ok) setMicBadge(true);
+    });
+  } catch (e) {
+    if (sendBtn) sendBtn.disabled = false;
+    input.disabled = false;
+    appendMsg('system', 'Unable to send message. Please try again.', Date.now(), 0, 0);
+  }
+
+  input.value = '';
+  input.focus();
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   let target = await getTargetTab();
   // Load context window limits
@@ -99,18 +175,42 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Toggle handler acts on the current active target tab (same as keyboard)
-  const toggleBtn = document.getElementById('toggleMic');
-  toggleBtn?.addEventListener('click', async () => {
-    const t = await getTargetTab();
-    if (!t) return;
-    chrome.runtime.sendMessage({ command: 'getMicState', tabId: t.id }, (res) => {
-      const enabled = !!res?.enabled;
-      if (enabled) {
-        chrome.runtime.sendMessage({ command: 'disableMicForTab', tabId: t.id }, () => setMicButtonState(false));
-      } else {
-        chrome.runtime.sendMessage({ command: 'enableMicForTab', tabId: t.id }, () => setMicButtonState(true));
-      }
+  const toggleControl = document.getElementById('toggleMic');
+  if (toggleControl instanceof HTMLInputElement) {
+    toggleControl.addEventListener('change', () => {
+      toggleMicForTarget(toggleControl.checked);
     });
+  } else {
+    toggleControl?.addEventListener('click', async () => {
+      const t = await getTargetTab();
+      if (!t) return;
+      chrome.runtime.sendMessage({ command: 'getMicState', tabId: t.id }, (res) => {
+        const enabled = !!res?.enabled;
+        if (enabled) {
+          chrome.runtime.sendMessage({ command: 'disableMicForTab', tabId: t.id }, () => setMicButtonState(false));
+        } else {
+          chrome.runtime.sendMessage({ command: 'enableMicForTab', tabId: t.id }, () => setMicButtonState(true));
+        }
+      });
+    });
+  }
+
+  const sendBtn = document.getElementById('composerSend');
+  sendBtn?.addEventListener('click', submitComposerMessage);
+
+  const composerInput = document.getElementById('composerInput');
+  composerInput?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      submitComposerMessage();
+    }
+  });
+
+  const addContextBtn = document.getElementById('addContextBtn');
+  addContextBtn?.addEventListener('click', () => {
+    try {
+      chrome.runtime.sendMessage({ event: 'addContextRequested' });
+    } catch {}
   });
 
   // Live updates: capture STT/LLM from the active target tab, and mic state globally
@@ -132,6 +232,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else if (msg?.event === 'llm') {
       appendMsg('assistant', msg.text, msg.ts, msg.tokens, msg.chars);
       incrementUsage(msg.tokens, msg.chars);
+      setMicBadge(false);
     } else if (msg?.event === 'system' && msg.type === 'mic') {
       if (msg.state === 'disabled') {
         appendMsg('system', 'Mic was stopped', msg.ts || Date.now(), 0, 0);

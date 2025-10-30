@@ -3,13 +3,13 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Hey Mic Admin</title>
+    <title>Hey Nano Admin</title>
     <link rel="stylesheet" href="admin_popup.css" />
   </head>
   <body>
     <div class="container">
       <header>
-        <h1>Hey Mic Admin</h1>
+        <h1>Hey Nano Admin</h1>
         <div class="controls">
           <button id="toggleMic" class="btn">Enable Mic</button>
           <span id="micBadge" class="status-badge off">OFF</span>
@@ -33,7 +33,7 @@
 
       <section>
         <h2>Global Off</h2>
-        <button id="disableAll" class="btn btn-secondary">Turn off Hey Mic on all tabs</button>
+        <button id="disableAll" class="btn btn-secondary">Turn off Hey Nano on all tabs</button>
       </section>
 
       <section>

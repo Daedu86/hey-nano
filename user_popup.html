@@ -3,17 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Hey Mic</title>
+    <title>Hey Nano</title>
     <link rel="stylesheet" href="user_popup.css" />
   </head>
   <body>
     <div class="container">
       <header>
-        <h1>Hey Mic</h1>
-        <div class="controls">
-          <button id="toggleMic" class="btn" aria-pressed="false">Enable Mic</button>
-          <span id="micBadge" class="status-badge off">OFF</span>
-        </div>
+        <h1>Hey Nano</h1>
+        <span id="micBadge" class="status-badge off" aria-live="polite">OFF</span>
       </header>
 
       <section>
@@ -21,6 +18,25 @@
       </section>
 
       <footer>
+        <div class="composer" role="form" aria-label="Send a message">
+          <textarea
+            id="composerInput"
+            rows="2"
+            placeholder="Write a message..."
+            spellcheck="false"
+          ></textarea>
+          <div class="composer-controls">
+            <button id="addContextBtn" class="btn" type="button">Add Context</button>
+            <label class="mic-toggle" for="toggleMic">
+              <input type="checkbox" id="toggleMic" aria-label="Toggle microphone" />
+              <span class="toggle-track">
+                <span class="toggle-thumb"></span>
+              </span>
+              <span class="toggle-label">Mic Off</span>
+            </label>
+            <button id="composerSend" class="btn primary" type="button">Send</button>
+          </div>
+        </div>
         <div id="contextInfo" class="hint">Live: your speech and assistant replies appear here.</div>
       </footer>
     </div>

@@ -3,16 +3,16 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Hey Mic Admin</title>
+    <title>Hey Nano Admin</title>
     <link rel="stylesheet" href="admin_popup.css" />
   </head>
   <body>
     <div class="container">
-      <h1 class="sr-only">Hey Mic Admin</h1>
+      <h1 class="sr-only">Hey Nano Admin</h1>
       <div id="grid" class="grid" aria-label="8x8 layout">
-        <!-- Hey Mic Admin feature -->
+        <!-- Hey Nano Admin feature -->
         <section class="tile" id="tile-admin" draggable="true" data-colspan="1">
-          <div class="tile-head">Hey Mic Admin</div>
+          <div class="tile-head"><span class="tile-number">Widget #1</span><span class="tile-title-text">Hey Nano Admin</span></div>
           <div class="tile-body">
             <div class="controls">
               <button id="toggleMic" class="btn">Enable Mic</button>
@@ -24,7 +24,7 @@
 
         <!-- Open Tab -->
         <section class="tile" id="tile-open" draggable="true" data-colspan="1">
-          <div class="tile-head">Open Tab</div>
+          <div class="tile-head"><span class="tile-number">Widget #2</span><span class="tile-title-text">Open Tab</span></div>
           <div class="tile-body">
             <form id="openForm">
               <input id="urlInput" type="text" placeholder="https://example.com or example.com" />
@@ -35,7 +35,7 @@
 
         <!-- List Tabs -->
         <section class="tile" id="tile-list" draggable="true" data-colspan="1">
-          <div class="tile-head">List Tabs</div>
+          <div class="tile-head"><span class="tile-number">Widget #3</span><span class="tile-title-text">List Tabs</span></div>
           <div class="tile-body">
             <button id="listTabs" class="btn">List</button>
             <div id="tabsOut" class="tabs-list"></div>
@@ -44,15 +44,15 @@
 
         <!-- Global Off feature -->
         <section class="tile" id="tile-global-off" draggable="true" data-colspan="1">
-          <div class="tile-head">Global Off</div>
+          <div class="tile-head"><span class="tile-number">Widget #4</span><span class="tile-title-text">Global Off</span></div>
           <div class="tile-body">
-            <button id="disableAll" class="btn btn-secondary">Turn off Hey Mic on all tabs</button>
+            <button id="disableAll" class="btn btn-secondary">Turn off Hey Nano on all tabs</button>
           </div>
         </section>
 
         <!-- Assistant Behaviour -->
         <section class="tile" id="tile-assistant" draggable="true" data-colspan="1">
-          <div class="tile-head">Assistant Behaviour</div>
+          <div class="tile-head"><span class="tile-number">Widget #5</span><span class="tile-title-text">Assistant Behaviour</span></div>
           <div class="tile-body">
             <div class="subhead">System Prompt</div>
             <pre id="sysPrompt" class="mono"></pre>
@@ -61,7 +61,7 @@
 
         <!-- Supported Voice Commands -->
         <section class="tile" id="tile-commands" draggable="true" data-colspan="1">
-          <div class="tile-head">Supported Voice Commands</div>
+          <div class="tile-head"><span class="tile-number">Widget #6</span><span class="tile-title-text">Supported Voice Commands</span></div>
           <div class="tile-body">
             <table id="cmdTable" class="cmd-table" aria-label="Supported Voice Commands">
               <thead>
@@ -78,7 +78,7 @@
 
         <!-- HTML/DOM LAYOUT (Widget #7) -->
         <section class="tile" id="tile-html-layout" draggable="true" data-colspan="1">
-          <div class="tile-head">Highlight HTML/DOM Layout</div>
+          <div class="tile-head"><span class="tile-number">Widget #7</span><span class="tile-title-text">Highlight HTML/DOM Layout</span></div>
           <div class="tile-body">
             <div class="controls" style="justify-content: space-between; align-items: center;">
               <div>
@@ -95,22 +95,6 @@
           </div>
         </section>
 
-        <!-- Surprise Me HTML (Widget #8) -->
-        <section class="tile" id="tile-surprise-html" draggable="true" data-colspan="1">
-          <div class="tile-head">Surprise me HTML</div>
-          <div class="tile-body">
-            <div class="controls" style="justify-content: space-between; align-items: center;">
-              <div>
-                <button id="surpriseEnable" class="btn">Shuffle Layout</button>
-                <button id="surpriseDisable" class="btn btn-secondary">Disable</button>
-                <button id="surpriseAsk" class="btn" title="Ask the AI for feedback on this layout">Ask LLM</button>
-                <button id="surpriseImprove" class="btn" title="Apply AI layout improvements (CSS-only)">Improve HTML</button>
-                <button id="surpriseRevertImprove" class="btn btn-secondary" title="Revert AI layout improvements">Revert</button>
-              </div>
-              <span id="surpriseBadge" class="status-badge off">OFF</span>
-            </div>
-          </div>
-        </section>
       </div>
     </div>
     <script src="admin_popup.js"></script>

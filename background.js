@@ -4,12 +4,24 @@ const micEnabledTabs = new Map(); // tabId -> boolean
 let lastFocusedNormalWindowId = null;
 // Track Admin Panel window id across reloads
 let adminWindowId = null;
-// Track detached User Popup window id
-let userWindowId = null;
+// Track user popup companion tabs per anchor tab id
+const userPopupTabs = new Map(); // anchorTabId -> { popupTabId, windowId }
+const popupAnchorByTabId = new Map(); // popupTabId -> anchorTabId
 // Track per-tab DOM highlight toggle via toolbar context menu
 const domHighlightTabs = new Map(); // tabId -> boolean
 let domLiftScale = 1.15; // default lift scale
 let menusReady = false;
+const POPUP_HTML_PATH = 'user_popup.html';
+const sidePanelAvailable = !!(chrome.sidePanel && typeof chrome.sidePanel.setOptions === 'function' && typeof chrome.sidePanel.open === 'function');
+
+function prepareSidePanelForTab(tabId) {
+  if (!sidePanelAvailable || typeof tabId !== 'number') return;
+  try {
+    chrome.sidePanel.setOptions({ tabId, path: POPUP_HTML_PATH, enabled: true }, () => {
+      void chrome.runtime?.lastError;
+    });
+  } catch {}
+}
 
 // Suppress noisy unhandled promise rejections from Chrome APIs when a target
 // page cannot receive messages (e.g., chrome:// pages, PDFs, closed tabs).
@@ -46,41 +58,222 @@ function updateDomLiftMenuTitle() {
   if (!menusReady) return;
   // The level item was removed; keep a safe no-op update to avoid promise rejections
   try {
-    chrome.contextMenus.update('heyMic.domLiftLevel', { title: `Lift Intensity: ${pct}%` }, () => {
+    chrome.contextMenus.update('heyNano.domLiftLevel', { title: `Lift Intensity: ${pct}%` }, () => {
       // ignore lastError if the menu item no longer exists
       void chrome.runtime?.lastError;
     });
   } catch {}
 }
 
-// Open or focus the detached user popup window
-function openOrFocusUserPopup() {
+async function configureSidePanelBehavior() {
+  if (!sidePanelAvailable || typeof chrome.sidePanel.setPanelBehavior !== 'function') return;
   try {
-    const url = chrome.runtime.getURL('user_popup.html');
-    if (userWindowId) {
-      chrome.windows.get(userWindowId, { populate: false }, (win) => {
-        if (chrome.runtime.lastError || !win) {
-          chrome.windows.create({ url, type: 'popup', width: 380, height: 560 }, (nw) => {
-            if (nw && typeof nw.id === 'number') userWindowId = nw.id;
-          });
+    await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+    chrome.tabs.query({}, (tabs) => {
+      (tabs || []).forEach((t) => prepareSidePanelForTab(t.id));
+    });
+  } catch {}
+}
+
+configureSidePanelBehavior().catch(() => {});
+
+if (sidePanelAvailable) {
+  if (chrome.tabs && typeof chrome.tabs.onCreated?.addListener === 'function') {
+    chrome.tabs.onCreated.addListener((tab) => {
+      if (tab && typeof tab.id === 'number') prepareSidePanelForTab(tab.id);
+    });
+  }
+  if (chrome.tabs && typeof chrome.tabs.onUpdated?.addListener === 'function') {
+    chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+      if (changeInfo && changeInfo.status === 'complete') prepareSidePanelForTab(tabId);
+    });
+  }
+  if (chrome.tabs && typeof chrome.tabs.onReplaced?.addListener === 'function') {
+    chrome.tabs.onReplaced.addListener((addedTabId) => {
+      prepareSidePanelForTab(addedTabId);
+    });
+  }
+}
+
+function tryActivateSplitView(windowId, primaryTabId, secondaryTabId) {
+  if (!windowId || !primaryTabId || !secondaryTabId) return false;
+  const tabsApi = chrome && chrome.tabs;
+  if (!tabsApi) return false;
+  let invoked = false;
+  const candidates = [
+    ['openSplitView', { windowId, primaryTabId, secondaryTabId }],
+    ['createSplitView', { windowId, primaryTabId, secondaryTabId }],
+    ['setSplitViewState', { windowId, primaryTabId, secondaryTabId }],
+    ['attachToSplitView', { windowId, primaryTabId, secondaryTabId }],
+  ];
+  for (const [fn, payload] of candidates) {
+    const maybeFn = tabsApi[fn];
+    if (typeof maybeFn !== 'function') continue;
+    try {
+      const result = maybeFn.call(tabsApi, payload);
+      invoked = true;
+      if (result && typeof result.catch === 'function') {
+        result.catch(() => {});
+      }
+      return true;
+    } catch (err) {
+      // Ignore invalid invocation signatures and try the next candidate
+    }
+  }
+  const fallback = tabsApi && (tabsApi.invokeSplitView || tabsApi.toggleSplitView);
+  if (typeof fallback === 'function') {
+    try {
+      const result = fallback.call(tabsApi, { windowId, primaryTabId, secondaryTabId });
+      invoked = true;
+      if (result && typeof result.catch === 'function') result.catch(() => {});
+      return true;
+    } catch (err) {
+      // Swallow; split view APIs are still experimental and may not be present.
+    }
+  }
+  return invoked;
+}
+
+// Open or focus the user popup UI, preferring the Chrome side panel when available
+function openOrFocusUserPopup(anchorTab) {
+  if (sidePanelAvailable) {
+    const openSidePanelForTab = async (tab) => {
+      if (!tab || typeof tab.id !== 'number') return false;
+      try {
+        await chrome.sidePanel.setOptions({ tabId: tab.id, path: POPUP_HTML_PATH, enabled: true });
+        await chrome.sidePanel.open({ tabId: tab.id });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    const dispatch = (tab) => {
+      if (!tab || typeof tab.id !== 'number') return;
+      openSidePanelForTab(tab);
+    };
+
+    if (anchorTab && typeof anchorTab.id === 'number') {
+      dispatch(anchorTab);
+      return;
+    }
+
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const active = (tabs || [])[0] || null;
+      if (active) {
+        dispatch(active);
+        return;
+      }
+      chrome.windows.getAll({ windowTypes: ["normal"], populate: true }, (wins) => {
+        const focused = (wins || []).find(w => w.focused) || (wins || [])[0] || null;
+        const tab = (focused && Array.isArray(focused.tabs)) ? focused.tabs.find(t => t.active) : null;
+        if (tab) dispatch(tab);
+      });
+    });
+    return;
+  }
+
+  openOrFocusUserPopupLegacy(anchorTab);
+}
+
+function openOrFocusUserPopupLegacy(anchorTab) {
+  const popupUrl = chrome.runtime.getURL(POPUP_HTML_PATH);
+
+  const focusPair = (anchor, popup) => {
+    if (!anchor || !popup) return;
+    const winId = anchor.windowId || popup.windowId;
+    if (typeof winId !== 'number') return;
+    chrome.windows.update(winId, { focused: true }, () => {
+      const bridged = tryActivateSplitView(winId, anchor.id, popup.id);
+      const targetTabId = bridged ? anchor.id : popup.id;
+      chrome.tabs.update(targetTabId, { active: true }, () => {});
+    });
+  };
+
+  const registerPair = (anchorId, popupTab) => {
+    if (!popupTab || typeof popupTab.id !== 'number') return;
+    userPopupTabs.set(anchorId, { popupTabId: popupTab.id, windowId: popupTab.windowId });
+    popupAnchorByTabId.set(popupTab.id, anchorId);
+  };
+
+  const createPopupForAnchor = (anchor) => {
+    if (!anchor || typeof anchor.id !== 'number') return;
+    const index = typeof anchor.index === 'number' ? anchor.index + 1 : undefined;
+    const winId = anchor.windowId;
+    chrome.tabs.create({
+      windowId: winId && typeof winId === 'number' ? winId : undefined,
+      url: popupUrl,
+      active: true,
+      index,
+    }, (popup) => {
+      if (!popup || typeof popup.id !== 'number') return;
+      registerPair(anchor.id, popup);
+      const targetWindowId = winId || popup.windowId;
+      const activated = tryActivateSplitView(targetWindowId, anchor.id, popup.id);
+      if (activated) {
+        chrome.tabs.update(anchor.id, { active: true }, () => {});
+      }
+    });
+  };
+
+  const ensureForAnchor = (anchor) => {
+    if (!anchor || typeof anchor.id !== 'number') return;
+    const anchorId = anchor.id;
+    const existing = userPopupTabs.get(anchorId);
+    if (existing && typeof existing.popupTabId === 'number') {
+      chrome.tabs.get(existing.popupTabId, (popup) => {
+        if (chrome.runtime.lastError || !popup) {
+          userPopupTabs.delete(anchorId);
+          popupAnchorByTabId.delete(existing.popupTabId);
+          createPopupForAnchor(anchor);
+          return;
+        }
+        if (!popup.url || !popup.url.startsWith(popupUrl)) {
+          chrome.tabs.update(popup.id, { url: popupUrl }, () => focusPair(anchor, popup));
         } else {
-          chrome.windows.update(userWindowId, { focused: true });
+          focusPair(anchor, popup);
         }
       });
       return;
     }
-    chrome.windows.create({ url, type: 'popup', width: 380, height: 560 }, (nw) => {
-      if (nw && typeof nw.id === 'number') userWindowId = nw.id;
+    createPopupForAnchor(anchor);
+  };
+
+  try {
+    if (anchorTab && typeof anchorTab.id === 'number') {
+      ensureForAnchor(anchorTab);
+      return;
+    }
+
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const active = (tabs || [])[0] || null;
+      if (active) {
+        ensureForAnchor(active);
+        return;
+      }
+      chrome.windows.getAll({ windowTypes: ["normal"], populate: true }, (wins) => {
+        const focused = (wins || []).find(w => w.focused) || (wins || [])[0] || null;
+        const anchor = (focused && Array.isArray(focused.tabs)) ? focused.tabs.find(t => t.active) : null;
+        if (anchor) ensureForAnchor(anchor);
+      });
     });
   } catch (e) {}
+}
+
+function openOrFocusUserPopupForTabId(tabId) {
+  if (typeof tabId !== 'number') return;
+  chrome.tabs.get(tabId, (tab) => {
+    if (chrome.runtime.lastError || !tab) return;
+    openOrFocusUserPopup(tab);
+  });
 }
 
 function ensureContextMenus() {
   // Rebuild menus from scratch to avoid duplicate-id errors
   chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({ id: "heyMic.disableAll", title: "Turn off Hey Mic on all tabs", contexts: ["action"] });
-    chrome.contextMenus.create({ id: "heyMic.adminPanel", title: "Open Admin Panel", contexts: ["action"] });
-    chrome.contextMenus.create({ id: "heyMic.toggleDomHighlight", title: "Highlight DOM/HTML", contexts: ["action"] });
+    chrome.contextMenus.create({ id: "heyNano.disableAll", title: "Turn off Hey Nano on all tabs", contexts: ["action"] });
+    chrome.contextMenus.create({ id: "heyNano.adminPanel", title: "Open Admin Panel", contexts: ["action"] });
+    chrome.contextMenus.create({ id: "heyNano.toggleDomHighlight", title: "Highlight DOM/HTML", contexts: ["action"] });
     menusReady = true;
   });
 }
@@ -147,15 +340,6 @@ function broadcastMicState(tabId, enabled) {
 function broadcastHtmlDomLayoutState(tabId, enabled) {
   try {
     chrome.runtime.sendMessage({ event: 'htmlDomLayoutSync', tabId, enabled: !!enabled });
-  } catch (e) {
-    // ignore
-  }
-}
-
-// Broadcast Surprise Me HTML toggle state so Admin widget can sync
-function broadcastSurpriseHtmlState(tabId, enabled) {
-  try {
-    chrome.runtime.sendMessage({ event: 'surpriseHtmlSync', tabId, enabled: !!enabled });
   } catch (e) {
     // ignore
   }
@@ -262,36 +446,10 @@ function sendHtmlDomLayoutToTab(tabId, enabled, finalResponse) {
       const scheme = (() => { try { return new URL(tabUrl).protocol.replace(':',''); } catch { return ''; } })();
       const blocked = Boolean(err);
       const hint = blocked && scheme === 'file'
-        ? "Enable 'Allow access to file URLs' for Hey Mic in chrome://extensions."
+        ? "Enable 'Allow access to file URLs' for Hey Nano in chrome://extensions."
         : (blocked && (scheme === 'chrome' || scheme === 'edge' || scheme === 'about'))
           ? 'Cannot inject into browser internal pages (chrome://, edge://, about:).' : (blocked ? err : null);
       if (typeof finalResponse === 'function') finalResponse({ ok: true, enabled, tabId, tabUrl, injected: ok, note: hint });
-    });
-  });
-}
-
-function sendSurpriseHtmlToTab(tabId, enabled, finalResponse) {
-  const state = enabled ? 'enabled' : 'disabled';
-  chrome.tabs.get(tabId, (tab) => {
-    if (chrome.runtime.lastError || !tab) {
-      const note = chrome.runtime.lastError && chrome.runtime.lastError.message ? String(chrome.runtime.lastError.message) : 'Tab not found';
-      try { broadcastSurpriseHtmlState(tabId, enabled); } catch {}
-      if (typeof finalResponse === 'function') return finalResponse({ ok: false, enabled, tabId: null, injected: false, note });
-      return;
-    }
-    const tabUrl = tab && tab.url ? tab.url : '';
-    const scheme = (() => { try { return new URL(tabUrl).protocol.replace(':',''); } catch { return ''; } })();
-    if (scheme === 'chrome' || scheme === 'edge' || scheme === 'about') {
-      broadcastSurpriseHtmlState(tabId, enabled);
-      if (typeof finalResponse === 'function') return finalResponse({ ok: true, enabled, tabId, injected: false, note: 'Cannot inject into browser internal pages (chrome://, edge://, about:).' });
-      return;
-    }
-    ensureContentListener(tabId, (ok) => {
-      if (ok) {
-        safeSend(tabId, { event: 'surpriseHtml', state });
-      }
-      broadcastSurpriseHtmlState(tabId, enabled);
-      if (typeof finalResponse === 'function') finalResponse({ ok: true, enabled, tabId, injected: ok });
     });
   });
 }
@@ -334,7 +492,7 @@ chrome.action.onClicked.addListener(async (tab) => {
   } else {
     await enableMicForTab(tabId);
     // Open/focus user popup when enabling via toolbar
-    openOrFocusUserPopup();
+    openOrFocusUserPopup(tab);
   }
 });
 
@@ -383,6 +541,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!tab) return sendResponse({ tab: null });
         sendResponse({ tab: { id: tab.id, title: tab.title, url: tab.url, windowId: tab.windowId } });
       };
+
+      if (sender && sender.tab && typeof sender.tab.id === 'number') {
+        const anchorId = popupAnchorByTabId.get(sender.tab.id);
+        if (typeof anchorId === 'number') {
+          chrome.tabs.get(anchorId, (anchorTab) => {
+            if (chrome.runtime.lastError || !anchorTab) {
+              respond(null);
+            } else {
+              respond(anchorTab);
+            }
+          });
+          return true;
+        }
+      }
 
       // If a windowId is provided, use its active tab
       if (typeof msg.windowId === 'number') {
@@ -445,7 +617,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             target: { tabId: tab.id },
             func: () => {
               try {
-                const api = window.HeyMicCommands;
+                const api = window.HeyNanoCommands;
                 if (api && typeof api.getSupportedCommandsTable === 'function') {
                   return api.getSupportedCommandsTable();
                 }
@@ -494,7 +666,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (typeof msg.tabId === "number") {
         enableMicForTab(msg.tabId).then(() => {
           // Open/focus detached user popup when enabling via Admin panel
-          openOrFocusUserPopup();
+          openOrFocusUserPopupForTabId(msg.tabId);
           sendResponse({ ok: true });
         });
         return true; // async
@@ -508,6 +680,41 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return false;
       }
       break;
+    }
+    case "typedInput": {
+      const tabId = typeof msg.tabId === 'number' ? msg.tabId : null;
+      const text = typeof msg.text === 'string' ? msg.text : '';
+      const cleaned = text.trim();
+      if (!tabId || !cleaned) {
+        if (sendResponse) sendResponse({ ok: false, error: 'invalid-input' });
+        return false;
+      }
+      ensureContentListener(tabId, (ok, err) => {
+        if (!ok) {
+          if (sendResponse) sendResponse({ ok: false, error: err || 'inject-failed' });
+          return;
+        }
+        try {
+          chrome.tabs.sendMessage(tabId, { command: "userTypedInput", text: cleaned }, () => {
+            const sendErr = chrome.runtime.lastError;
+            if (sendResponse) {
+              if (sendErr) {
+                const msg = String(sendErr.message || sendErr);
+                if (/message port closed before a response was received/i.test(msg)) {
+                  sendResponse({ ok: true });
+                } else {
+                  sendResponse({ ok: false, error: msg });
+                }
+              } else {
+                sendResponse({ ok: true });
+              }
+            }
+          });
+        } catch (e) {
+          if (sendResponse) sendResponse({ ok: false, error: e?.message || String(e) });
+        }
+      });
+      return true; // async
     }
     case "stopAllMics": {
       const currentId = sender && sender.tab ? sender.tab.id : null;
@@ -581,110 +788,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       });
       return true; // async
     }
-    case "getSurpriseHtmlEnabled": {
-      try {
-        chrome.storage.local.get(['surpriseHtmlEnabled'], (d) => {
-          sendResponse({ enabled: !!(d && d.surpriseHtmlEnabled) });
-        });
-      } catch (e) {
-        sendResponse({ enabled: false });
-      }
-      return true;
-    }
-    case "setSurpriseHtmlEnabled": {
-      const enabled = !!msg.enabled;
-      // Persist preference (global)
-      try { chrome.storage?.local?.set && chrome.storage.local.set({ surpriseHtmlEnabled: enabled }, () => {}); } catch {}
-      const dispatch = (tab) => {
-        if (tab && typeof tab.id === 'number') {
-          sendSurpriseHtmlToTab(tab.id, enabled, sendResponse);
-        } else {
-          sendResponse({ ok: true, enabled, tabId: null });
-        }
-      };
-      if (typeof lastFocusedNormalWindowId === 'number') {
-        chrome.tabs.query({ windowId: lastFocusedNormalWindowId, active: true }, (tabs) => dispatch((tabs || [])[0] || null));
-        return true; // async
-      }
-      chrome.windows.getAll({ windowTypes: ["normal"], populate: true }, (wins) => {
-        const focused = (wins || []).find(w => w.focused) || (wins || [])[0];
-        const tab = (focused && Array.isArray(focused.tabs)) ? focused.tabs.find(t => t.active) : null;
-        dispatch(tab || null);
-      });
-      return true; // async
-    }
-    case "askSurpriseOpinion": {
-      const dispatch = (tab) => {
-        if (tab && typeof tab.id === 'number') {
-          ensureContentListener(tab.id, (ok) => {
-            if (ok) safeSend(tab.id, { event: 'surpriseOpinion' });
-            // Open/focus the detached user popup so the answer is visible immediately
-            try { openOrFocusUserPopup(); } catch {}
-            sendResponse({ ok });
-          });
-          return true;
-        }
-        sendResponse({ ok: false });
-        return false;
-      };
-      if (typeof lastFocusedNormalWindowId === 'number') {
-        chrome.tabs.query({ windowId: lastFocusedNormalWindowId, active: true }, (tabs) => dispatch((tabs || [])[0] || null));
-        return true; // async
-      }
-      chrome.windows.getAll({ windowTypes: ["normal"], populate: true }, (wins) => {
-        const focused = (wins || []).find(w => w.focused) || (wins || [])[0];
-        const tab = (focused && Array.isArray(focused.tabs)) ? focused.tabs.find(t => t.active) : null;
-        dispatch(tab || null);
-      });
-      return true; // async
-    }
-    case "applyLayoutImprovements": {
-      const dispatch = (tab) => {
-        if (tab && typeof tab.id === 'number') {
-          ensureContentListener(tab.id, (ok) => {
-            if (ok) safeSend(tab.id, { event: 'surpriseImprove', action: 'apply' });
-            try { openOrFocusUserPopup(); } catch {}
-            sendResponse({ ok });
-          });
-          return true;
-        }
-        sendResponse({ ok: false });
-        return false;
-      };
-      if (typeof lastFocusedNormalWindowId === 'number') {
-        chrome.tabs.query({ windowId: lastFocusedNormalWindowId, active: true }, (tabs) => dispatch((tabs || [])[0] || null));
-        return true; // async
-      }
-      chrome.windows.getAll({ windowTypes: ["normal"], populate: true }, (wins) => {
-        const focused = (wins || []).find(w => w.focused) || (wins || [])[0];
-        const tab = (focused && Array.isArray(focused.tabs)) ? focused.tabs.find(t => t.active) : null;
-        dispatch(tab || null);
-      });
-      return true; // async
-    }
-    case "revertLayoutImprovements": {
-      const dispatch = (tab) => {
-        if (tab && typeof tab.id === 'number') {
-          ensureContentListener(tab.id, (ok) => {
-            if (ok) safeSend(tab.id, { event: 'surpriseImprove', action: 'revert' });
-            sendResponse({ ok });
-          });
-          return true;
-        }
-        sendResponse({ ok: false });
-        return false;
-      };
-      if (typeof lastFocusedNormalWindowId === 'number') {
-        chrome.tabs.query({ windowId: lastFocusedNormalWindowId, active: true }, (tabs) => dispatch((tabs || [])[0] || null));
-        return true; // async
-      }
-      chrome.windows.getAll({ windowTypes: ["normal"], populate: true }, (wins) => {
-        const focused = (wins || []).find(w => w.focused) || (wins || [])[0];
-        const tab = (focused && Array.isArray(focused.tabs)) ? focused.tabs.find(t => t.active) : null;
-        dispatch(tab || null);
-      });
-      return true; // async
-    }
+    default:
+      break;
   }
   // Also capture content-script events for logging and state sync
   if (msg && msg.event && sender && sender.tab && typeof sender.tab.id === 'number') {
@@ -707,31 +812,48 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   micEnabledTabs.delete(tabId);
   domHighlightTabs.delete(tabId);
+  if (userPopupTabs.has(tabId)) {
+    const entry = userPopupTabs.get(tabId);
+    userPopupTabs.delete(tabId);
+    if (entry && typeof entry.popupTabId === 'number') {
+      popupAnchorByTabId.delete(entry.popupTabId);
+      try { chrome.tabs.remove(entry.popupTabId); } catch {}
+    }
+  }
+  if (popupAnchorByTabId.has(tabId)) {
+    const anchorId = popupAnchorByTabId.get(tabId);
+    popupAnchorByTabId.delete(tabId);
+    if (typeof anchorId === 'number') {
+      userPopupTabs.delete(anchorId);
+    }
+  }
 });
 
 // Context menu on the toolbar icon: global off
 chrome.runtime.onInstalled.addListener(() => {
   loadDomLiftScale(() => ensureContextMenus());
+  configureSidePanelBehavior().catch(() => {});
 });
 
 chrome.runtime.onStartup && chrome.runtime.onStartup.addListener(() => {
   loadDomLiftScale(() => ensureContextMenus());
+  configureSidePanelBehavior().catch(() => {});
 });
 
 chrome.contextMenus.onClicked.addListener((info) => {
-  if (info.menuItemId === "heyMic.disableAll") {
+  if (info.menuItemId === "heyNano.disableAll") {
     disableAllMics();
   }
-  if (info.menuItemId === "heyMic.adminPanel") {
+  if (info.menuItemId === "heyNano.adminPanel") {
     const url = chrome.runtime.getURL('admin_popup.html');
     chrome.windows.create({ url, type: 'popup', width: 820, height: 680 }, (win) => {
       if (win && typeof win.id === 'number') {
         adminWindowId = win.id;
-        try { chrome.storage.local.set({ heyMicAdminWindowId: adminWindowId }); } catch {}
+        try { chrome.storage.local.set({ heyNanoAdminWindowId: adminWindowId }); } catch {}
       }
     });
   }
-  if (info.menuItemId === "heyMic.toggleDomHighlight") {
+  if (info.menuItemId === "heyNano.toggleDomHighlight") {
     const toggleForTab = (tab) => {
       if (!tab || typeof tab.id !== 'number') return;
       const current = !!domHighlightTabs.get(tab.id);
@@ -765,7 +887,7 @@ chrome.windows.onFocusChanged.addListener((windowId) => {
   });
 });
 
-// removed separate user popup window; overlay is rendered in content.js
+// User popup now lives in a companion tab (split beside the active tab when available)
 
 // Keyboard shortcut: toggle mic for active tab
 chrome.commands.onCommand.addListener((command) => {
@@ -780,7 +902,7 @@ chrome.commands.onCommand.addListener((command) => {
     } else {
       await enableMicForTab(tabId);
       // Open/focus detached user popup on hotkey enable
-      openOrFocusUserPopup();
+      openOrFocusUserPopup(tab);
     }
   });
 });
@@ -788,8 +910,8 @@ chrome.commands.onCommand.addListener((command) => {
 // Restore Admin Panel after reloads if it was open previously
 async function restoreAdminPanelIfNeeded() {
   try {
-    chrome.storage.local.get(['heyMicAdminWindowId'], (data) => {
-      const storedId = data && typeof data.heyMicAdminWindowId === 'number' ? data.heyMicAdminWindowId : null;
+    chrome.storage.local.get(['heyNanoAdminWindowId'], (data) => {
+      const storedId = data && typeof data.heyNanoAdminWindowId === 'number' ? data.heyNanoAdminWindowId : null;
       if (!storedId) return;
       adminWindowId = storedId;
       chrome.windows.get(storedId, { populate: true }, (win) => {
@@ -799,7 +921,7 @@ async function restoreAdminPanelIfNeeded() {
           chrome.windows.create({ url, type: 'popup', width: 820, height: 680 }, (nw) => {
             if (nw && typeof nw.id === 'number') {
               adminWindowId = nw.id;
-              try { chrome.storage.local.set({ heyMicAdminWindowId: adminWindowId }); } catch {}
+              try { chrome.storage.local.set({ heyNanoAdminWindowId: adminWindowId }); } catch {}
             }
           });
           return;
@@ -818,6 +940,7 @@ async function restoreAdminPanelIfNeeded() {
 }
 
 chrome.runtime.onInstalled.addListener(() => {
+  configureSidePanelBehavior();
   restoreAdminPanelIfNeeded();
 });
 
@@ -825,10 +948,7 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.windows.onRemoved.addListener((winId) => {
   if (adminWindowId && winId === adminWindowId) {
     adminWindowId = null;
-    try { chrome.storage.local.remove('heyMicAdminWindowId'); } catch {}
-  }
-  if (userWindowId && winId === userWindowId) {
-    userWindowId = null;
+    try { chrome.storage.local.remove('heyNanoAdminWindowId'); } catch {}
   }
 });
 
@@ -836,7 +956,7 @@ chrome.windows.onRemoved.addListener((winId) => {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.command === 'registerAdminWindow' && typeof msg.windowId === 'number') {
     adminWindowId = msg.windowId;
-    try { chrome.storage.local.set({ heyMicAdminWindowId: adminWindowId }); } catch {}
+    try { chrome.storage.local.set({ heyNanoAdminWindowId: adminWindowId }); } catch {}
     sendResponse && sendResponse({ ok: true });
     return true;
   }

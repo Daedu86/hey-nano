@@ -42,13 +42,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   const htmlDomBadge = document.getElementById('htmlDomBadge');
   const htmlDomTarget = document.getElementById('htmlDomTarget');
   const htmlDomRefresh = document.getElementById('htmlDomRefresh');
-  // Surprise Me HTML elements
-  const surpriseEnable = document.getElementById('surpriseEnable');
-  const surpriseDisable = document.getElementById('surpriseDisable');
-  const surpriseBadge = document.getElementById('surpriseBadge');
-  const surpriseAsk = document.getElementById('surpriseAsk');
-  const surpriseImprove = document.getElementById('surpriseImprove');
-  const surpriseRevertImprove = document.getElementById('surpriseRevertImprove');
   let htmlDomCurrentTabId = null;
 
   let target = await getTargetTab();
@@ -69,17 +62,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   try {
     chrome.runtime.sendMessage({ command: 'getHtmlDomLayoutEnabled' }, (resp) => setHtmlDomBadge(!!resp?.enabled));
-  } catch {}
-
-  // Init Surprise Me HTML state
-  function setSurpriseBadge(enabled) {
-    if (!surpriseBadge) return;
-    surpriseBadge.textContent = enabled ? 'ON' : 'OFF';
-    surpriseBadge.classList.toggle('on', !!enabled);
-    surpriseBadge.classList.toggle('off', !enabled);
-  }
-  try {
-    chrome.runtime.sendMessage({ command: 'getSurpriseHtmlEnabled' }, (resp) => setSurpriseBadge(!!resp?.enabled));
   } catch {}
 
   htmlDomEnable?.addEventListener('click', () => {
@@ -105,7 +87,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           try { console.log('[Admin] HTML/DOM LAYOUT: Enable response', info); } catch {}
           if (resp && htmlDomTarget) {
             const extra = resp.note ? `\nNote: ${resp.note}` : '';
-            if (resp.tabUrl) htmlDomTarget.textContent = `tabId=${resp.tabId} • ${resp.tabUrl}${extra}`;
+            if (resp.tabUrl) htmlDomTarget.textContent = `tabId=${resp.tabId} - ${resp.tabUrl}${extra}`;
             else if (extra) htmlDomTarget.textContent += extra;
           }
           if (resp.injected === false) {
@@ -147,7 +129,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           try { console.log('[Admin] HTML/DOM LAYOUT: Disable response', info); } catch {}
           if (resp && htmlDomTarget) {
             const extra = resp.note ? `\nNote: ${resp.note}` : '';
-            if (resp.tabUrl) htmlDomTarget.textContent = `tabId=${resp.tabId} • ${resp.tabUrl}${extra}`;
+            if (resp.tabUrl) htmlDomTarget.textContent = `tabId=${resp.tabId} - ${resp.tabUrl}${extra}`;
             else if (extra) htmlDomTarget.textContent += extra;
           }
         } else {
@@ -159,25 +141,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // Surprise Me HTML handlers
-  surpriseEnable?.addEventListener('click', () => {
-    const payload = { command: 'setSurpriseHtmlEnabled', enabled: true };
-    try { chrome.runtime.sendMessage(payload, (resp) => { if (resp) setSurpriseBadge(!!resp.enabled); }); } catch {}
-  });
-  surpriseDisable?.addEventListener('click', () => {
-    const payload = { command: 'setSurpriseHtmlEnabled', enabled: false };
-    try { chrome.runtime.sendMessage(payload, (resp) => { if (resp) setSurpriseBadge(!!resp.enabled); }); } catch {}
-  });
-  surpriseAsk?.addEventListener('click', () => {
-    try { chrome.runtime.sendMessage({ command: 'askSurpriseOpinion' }); } catch {}
-  });
-  surpriseImprove?.addEventListener('click', () => {
-    try { chrome.runtime.sendMessage({ command: 'applyLayoutImprovements' }); } catch {}
-  });
-  surpriseRevertImprove?.addEventListener('click', () => {
-    try { chrome.runtime.sendMessage({ command: 'revertLayoutImprovements' }); } catch {}
-  });
-
   // Refresh and display the current active target tab (independent of mic)
   async function refreshHtmlDomTarget() {
     const write = (tab) => {
@@ -185,7 +148,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (tab && typeof tab.id === 'number') {
         const title = tab.title || '(no title)';
         const url = tab.url || '';
-        htmlDomTarget.textContent = `tabId=${tab.id} • ${title} \n${url}`;
+        htmlDomTarget.textContent = `tabId=${tab.id} - ${title} \n${url}`;
         htmlDomCurrentTabId = tab.id;
       } else {
         htmlDomTarget.textContent = 'No active tab resolved. Click Refresh Target while a page is focused.';
@@ -235,7 +198,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Keep Admin Panel UI in sync with external changes (toolbar/shortcut)
   chrome.runtime.onMessage.addListener((msg) => {
-    if (msg && msg.event === 'micStateChanged') {
+    if (msg?.event === 'micStateChanged') {
       // If the target tab changed (user focused another tab), refresh it
       getTargetTab().then((current) => {
         target = current || target;
@@ -245,7 +208,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       });
     }
-    if (msg && msg.event === 'htmlDomLayoutSync') {
+    if (msg?.event === 'htmlDomLayoutSync') {
       try {
         const enabled = !!msg.enabled;
         const badge = document.getElementById('htmlDomBadge');
@@ -253,16 +216,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           badge.textContent = enabled ? 'ON' : 'OFF';
           badge.classList.toggle('on', enabled);
           badge.classList.toggle('off', !enabled);
-        }
-      } catch {}
-    }
-    if (msg && msg.event === 'surpriseHtmlSync') {
-      try {
-        const enabled = !!msg.enabled;
-        if (surpriseBadge) {
-          surpriseBadge.textContent = enabled ? 'ON' : 'OFF';
-          surpriseBadge.classList.toggle('on', enabled);
-          surpriseBadge.classList.toggle('off', !enabled);
         }
       } catch {}
     }
@@ -287,7 +240,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const id = document.createElement('div');
         id.className = 'tab-id';
-        id.textContent = `#${i + 1} • id=${t.id}`;
+        id.textContent = `#${i + 1} - id=${t.id}`;
 
         const title = document.createElement('div');
         title.className = 'tab-title';
@@ -354,22 +307,23 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   // Init draggable grid
   setupGridDnD();
-  updateWidgetTitles();
 });
 
 // --- Draggable Grid (8x8) -------------------------------------------------
 function setupGridDnD() {
   const grid = document.getElementById('grid');
   if (!grid) return;
-  const orderKey = 'heyMic.admin.gridOrder';
+  const orderKey = 'heyNano.admin.gridOrder';
 
   // Apply saved order
   try {
     const saved = JSON.parse(localStorage.getItem(orderKey) || '[]');
-    const byId = new Map([...grid.children].map(el => [el.id, el]));
-    saved.forEach(id => { const el = byId.get(id); if (el) grid.appendChild(el); });
+    const byId = new Map([...grid.children].map((el) => [el.id, el]));
+    saved.forEach((id) => {
+      const el = byId.get(id);
+      if (el) grid.appendChild(el);
+    });
   } catch {}
-  // Ensure titles reflect current order on load
   updateWidgetTitles();
 
   let dragEl = null;
@@ -387,9 +341,8 @@ function setupGridDnD() {
     if (dragEl) dragEl.classList.remove('dragging');
     dragEl = null; dragId = null;
     // Save order
-    const ids = [...grid.children].map(el => el.id);
+    const ids = [...grid.children].map((el) => el.id);
     try { localStorage.setItem(orderKey, JSON.stringify(ids)); } catch {}
-    // Update numbering after drop
     updateWidgetTitles();
   });
   grid.addEventListener('dragover', (e) => {
@@ -406,64 +359,18 @@ function setupGridDnD() {
   grid.addEventListener('drop', (e) => { e.preventDefault(); });
 }
 
-// Number tiles in visual order: "WIDGET # N: Title"
+// Number tiles in visual order: "WIDGET #N"
 function updateWidgetTitles() {
   const grid = document.getElementById('grid');
   if (!grid) return;
   const tiles = [...grid.querySelectorAll('.tile')];
-  tiles.forEach((tile, i) => {
-    const head = tile.querySelector('.tile-head');
-    if (!head) return;
-    // Preserve original base title in dataset
-    if (!tile.dataset.title || tile.dataset.title.trim() === '') {
-      tile.dataset.title = (head.textContent || '').replace(/^WIDGET\s*#\s*\d+\s*:\s*/i, '').trim();
-    }
-    const base = tile.dataset.title || head.textContent || '';
-    const full = `WIDGET # ${i + 1}: ${base}`;
-    // Rebuild header content with title span + copy button
-    head.innerHTML = '';
-    const titleSpan = document.createElement('span');
-    titleSpan.className = 'tile-title-text';
-    titleSpan.textContent = full;
-    const copyBtn = document.createElement('button');
-    copyBtn.className = 'tile-copy-btn';
-    copyBtn.type = 'button';
-    copyBtn.title = 'Copy title';
-    copyBtn.setAttribute('aria-label', 'Copy title');
-    copyBtn.textContent = 'Copy';
-    // Prevent drag when interacting with the button
-    copyBtn.addEventListener('mousedown', (e) => e.stopPropagation());
-    copyBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          await navigator.clipboard.writeText(full);
-        } else {
-          const ta = document.createElement('textarea');
-          ta.value = full;
-          ta.style.position = 'fixed';
-          ta.style.left = '-9999px';
-          document.body.appendChild(ta);
-          ta.select();
-          document.execCommand('copy');
-          document.body.removeChild(ta);
-        }
-        // Optional: brief visual feedback
-        const old = copyBtn.textContent;
-        copyBtn.textContent = 'Copied';
-        setTimeout(() => { copyBtn.textContent = old; }, 900);
-      } catch {
-        // Fallback visual
-        const old = copyBtn.textContent;
-        copyBtn.textContent = 'Copied';
-        setTimeout(() => { copyBtn.textContent = old; }, 900);
-      }
-    });
-    head.appendChild(titleSpan);
-    head.appendChild(copyBtn);
+  tiles.forEach((tile, index) => {
+    const numberEl = tile.querySelector('.tile-number');
+    if (numberEl) numberEl.textContent = `Widget #${index + 1}`;
   });
 }
 
+// Determine drop position in grid
 function getDropBeforeElement(container, x, y) {
   const els = [...container.querySelectorAll('.tile:not(.dragging)')];
   if (!els.length) return null;
@@ -485,3 +392,6 @@ function getDropBeforeElement(container, x, y) {
   }
   return null;
 }
+
+
+
