@@ -7,39 +7,90 @@
     <link rel="stylesheet" href="user_popup.css" />
   </head>
   <body>
-    <div class="container">
-      <header>
-        <h1>Hey Nano</h1>
-        <span id="micBadge" class="status-badge off" aria-live="polite">OFF</span>
-      </header>
+    <div class="layout" id="layoutPanels">
+      <div class="panel" data-panel="chat">
+        <button type="button" class="panel-handle" draggable="true" aria-label="Drag chat panel" aria-grabbed="false">
+          <span aria-hidden="true">⋮⋮</span>
+        </button>
+        <div class="panel-content">
+          <div class="container">
+            <header>
+              <h1>Hey Nano</h1>
+              <div class="header-actions">
+                <button id="resetSessionBtn" class="btn ghost btn-sm" type="button" aria-label="Start a new chat session">New Session</button>
+                <span id="micBadge" class="status-badge off" aria-live="polite">OFF</span>
+              </div>
+            </header>
 
-      <section>
-        <div id="chat" class="chat"></div>
-      </section>
+            <section aria-label="Conversation">
+              <div id="chat" class="chat"></div>
+            </section>
 
-      <footer>
-        <div class="composer" role="form" aria-label="Send a message">
-          <textarea
-            id="composerInput"
-            rows="2"
-            placeholder="Write a message..."
-            spellcheck="false"
-          ></textarea>
-          <div class="composer-controls">
-            <button id="addContextBtn" class="btn" type="button">Add Context</button>
-            <label class="mic-toggle" for="toggleMic">
-              <input type="checkbox" id="toggleMic" aria-label="Toggle microphone" />
-              <span class="toggle-track">
-                <span class="toggle-thumb"></span>
-              </span>
-              <span class="toggle-label">Mic Off</span>
-            </label>
-            <button id="composerSend" class="btn primary" type="button">Send</button>
+            <footer>
+              <div class="composer" role="form" aria-label="Send a message">
+                <textarea
+                  id="composerInput"
+                  rows="2"
+                  placeholder="Write a message..."
+                  spellcheck="false"
+                ></textarea>
+                <div class="composer-controls">
+                  <button id="addContextBtn" class="btn" type="button" aria-expanded="false">Add Context</button>
+                  <label class="mic-toggle" for="toggleMic">
+                    <input type="checkbox" id="toggleMic" aria-label="Toggle microphone" />
+                    <span class="toggle-track">
+                      <span class="toggle-thumb"></span>
+                    </span>
+                    <span class="toggle-label">Mic Off</span>
+                  </label>
+                  <button id="composerSend" class="btn primary" type="button">Send</button>
+                </div>
+              </div>
+              <div id="contextInfo" class="hint">Live: your speech and assistant replies appear here.</div>
+            </footer>
           </div>
         </div>
-        <div id="contextInfo" class="hint">Live: your speech and assistant replies appear here.</div>
-      </footer>
+      </div>
+
+      <div class="panel" data-panel="context" hidden>
+        <button type="button" class="panel-handle" draggable="true" aria-label="Drag context panel" aria-grabbed="false">
+          <span aria-hidden="true">⋮⋮</span>
+        </button>
+        <div class="panel-content">
+          <aside id="contextPane" hidden class="context-pane" aria-label="Shared context">
+            <div class="context-header">
+              <div class="context-title">
+                <h2>Context</h2>
+                <span id="contextCount" class="context-count" aria-live="polite">0</span>
+              </div>
+              <span class="context-legend">Top 5 (highlighted) sent as instant context</span>
+              <button id="contextHideBtn" class="btn ghost btn-sm" type="button" aria-label="Hide context panel">Hide</button>
+            </div>
+            <form id="contextForm" class="context-form">
+              <label class="sr-only" for="contextTitle">Context title</label>
+              <input id="contextTitle" type="text" placeholder="Title (optional)" autocomplete="off" />
+              <label class="sr-only" for="contextBody">Context details</label>
+              <textarea id="contextBody" rows="4" placeholder="Paste notes, URLs, or snippets for the assistant..." spellcheck="false"></textarea>
+              <div class="context-form-media">
+                <div class="context-media-actions">
+                  <input id="contextImages" type="file" accept="image/*" multiple hidden />
+                  <button type="button" id="contextImagesTrigger" class="btn ghost btn-sm">Attach Images</button>
+                  <span class="context-media-hint">PNG, JPG, or GIF - up to 3 images - 512 KB each</span>
+                </div>
+                <div id="contextImagePreview" class="context-image-preview" data-empty="true" aria-live="polite"></div>
+              </div>
+              <div class="context-form-actions">
+                <button type="submit" class="btn primary btn-sm">Save Context</button>
+                <button type="button" id="contextCancelBtn" class="btn ghost btn-sm">Cancel</button>
+              </div>
+            </form>
+            <div id="contextEmpty" class="context-empty">No context shared yet.</div>
+            <div id="contextList" class="context-list" role="list"></div>
+          </aside>
+        </div>
+      </div>
     </div>
     <script src="user_popup.js"></script>
   </body>
   </html>
+

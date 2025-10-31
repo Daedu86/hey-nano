@@ -22,20 +22,9 @@
           </div>
         </section>
 
-        <!-- Open Tab -->
-        <section class="tile" id="tile-open" draggable="true" data-colspan="1">
-          <div class="tile-head"><span class="tile-number">Widget #2</span><span class="tile-title-text">Open Tab</span></div>
-          <div class="tile-body">
-            <form id="openForm">
-              <input id="urlInput" type="text" placeholder="https://example.com or example.com" />
-              <button type="submit" class="btn">Open</button>
-            </form>
-          </div>
-        </section>
-
         <!-- List Tabs -->
         <section class="tile" id="tile-list" draggable="true" data-colspan="1">
-          <div class="tile-head"><span class="tile-number">Widget #3</span><span class="tile-title-text">List Tabs</span></div>
+          <div class="tile-head"><span class="tile-number">Widget #2</span><span class="tile-title-text">List Tabs</span></div>
           <div class="tile-body">
             <button id="listTabs" class="btn">List</button>
             <div id="tabsOut" class="tabs-list"></div>
@@ -44,7 +33,7 @@
 
         <!-- Global Off feature -->
         <section class="tile" id="tile-global-off" draggable="true" data-colspan="1">
-          <div class="tile-head"><span class="tile-number">Widget #4</span><span class="tile-title-text">Global Off</span></div>
+          <div class="tile-head"><span class="tile-number">Widget #3</span><span class="tile-title-text">Global Off</span></div>
           <div class="tile-body">
             <button id="disableAll" class="btn btn-secondary">Turn off Hey Nano on all tabs</button>
           </div>
@@ -52,7 +41,7 @@
 
         <!-- Assistant Behaviour -->
         <section class="tile" id="tile-assistant" draggable="true" data-colspan="1">
-          <div class="tile-head"><span class="tile-number">Widget #5</span><span class="tile-title-text">Assistant Behaviour</span></div>
+          <div class="tile-head"><span class="tile-number">Widget #4</span><span class="tile-title-text">Assistant Behaviour</span></div>
           <div class="tile-body">
             <div class="subhead">System Prompt</div>
             <pre id="sysPrompt" class="mono"></pre>
@@ -61,7 +50,7 @@
 
         <!-- Supported Voice Commands -->
         <section class="tile" id="tile-commands" draggable="true" data-colspan="1">
-          <div class="tile-head"><span class="tile-number">Widget #6</span><span class="tile-title-text">Supported Voice Commands</span></div>
+          <div class="tile-head"><span class="tile-number">Widget #5</span><span class="tile-title-text">Supported Voice Commands</span></div>
           <div class="tile-body">
             <table id="cmdTable" class="cmd-table" aria-label="Supported Voice Commands">
               <thead>
@@ -73,25 +62,6 @@
               </thead>
               <tbody></tbody>
             </table>
-          </div>
-        </section>
-
-        <!-- HTML/DOM LAYOUT (Widget #7) -->
-        <section class="tile" id="tile-html-layout" draggable="true" data-colspan="1">
-          <div class="tile-head"><span class="tile-number">Widget #7</span><span class="tile-title-text">Highlight HTML/DOM Layout</span></div>
-          <div class="tile-body">
-            <div class="controls" style="justify-content: space-between; align-items: center;">
-              <div>
-                <button id="htmlDomEnable" class="btn">Enable</button>
-                <button id="htmlDomDisable" class="btn btn-secondary">Disable</button>
-              </div>
-              <span id="htmlDomBadge" class="status-badge off">OFF</span>
-            </div>
-            <div class="subhead" style="margin-top:8px;">Target Tab</div>
-            <div id="htmlDomTarget" class="mono" style="max-height:60px; overflow:auto;">Detecting…</div>
-            <div style="margin-top:6px; display:flex; gap:8px;">
-              <button id="htmlDomRefresh" class="btn">Refresh Target</button>
-            </div>
           </div>
         </section>
 

@@ -1,10 +1,3 @@
-function normalizeUrl(u) {
-  let url = (u || '').trim();
-  if (!url) return '';
-  if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
-  return url;
-}
-
 async function getTargetTab() {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage({ command: 'getActiveTargetTab' }, (resp) => resolve(resp?.tab || null));
@@ -32,17 +25,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   } catch {}
   const toggleBtn = document.getElementById('toggleMic');
-  const openForm = document.getElementById('openForm');
-  const urlInput = document.getElementById('urlInput');
   const listBtn = document.getElementById('listTabs');
   const out = document.getElementById('tabsOut');
   const disableAll = document.getElementById('disableAll');
-  const htmlDomEnable = document.getElementById('htmlDomEnable');
-  const htmlDomDisable = document.getElementById('htmlDomDisable');
-  const htmlDomBadge = document.getElementById('htmlDomBadge');
-  const htmlDomTarget = document.getElementById('htmlDomTarget');
-  const htmlDomRefresh = document.getElementById('htmlDomRefresh');
-  let htmlDomCurrentTabId = null;
 
   let target = await getTargetTab();
   if (!target) {
@@ -53,118 +38,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  // Init HTML/DOM Layout state
-  function setHtmlDomBadge(enabled) {
-    if (!htmlDomBadge) return;
-    htmlDomBadge.textContent = enabled ? 'ON' : 'OFF';
-    htmlDomBadge.classList.toggle('on', !!enabled);
-    htmlDomBadge.classList.toggle('off', !enabled);
-  }
-  try {
-    chrome.runtime.sendMessage({ command: 'getHtmlDomLayoutEnabled' }, (resp) => setHtmlDomBadge(!!resp?.enabled));
-  } catch {}
-
-  htmlDomEnable?.addEventListener('click', () => {
-    const payload = { command: 'setHtmlDomLayoutEnabled', enabled: true };
-    if (typeof htmlDomCurrentTabId === 'number') payload.tabId = htmlDomCurrentTabId;
-    try { console.log('[Admin] HTML/DOM LAYOUT: Enable clicked', payload); } catch {}
-    try {
-      chrome.runtime.sendMessage(payload, (resp) => {
-        if (chrome.runtime.lastError) {
-          try { console.error('[Admin] HTML/DOM LAYOUT: Enable failed:', chrome.runtime.lastError.message || chrome.runtime.lastError); } catch {}
-          return;
-        }
-        setHtmlDomBadge(true);
-        if (resp) {
-          const info = {
-            ok: resp.ok,
-            enabled: resp.enabled,
-            tabId: resp.tabId,
-            tabUrl: resp.tabUrl,
-            injected: resp.injected,
-            note: resp.note || null,
-          };
-          try { console.log('[Admin] HTML/DOM LAYOUT: Enable response', info); } catch {}
-          if (resp && htmlDomTarget) {
-            const extra = resp.note ? `\nNote: ${resp.note}` : '';
-            if (resp.tabUrl) htmlDomTarget.textContent = `tabId=${resp.tabId} - ${resp.tabUrl}${extra}`;
-            else if (extra) htmlDomTarget.textContent += extra;
-          }
-          if (resp.injected === false) {
-            try { console.warn('[Admin] HTML/DOM LAYOUT: Content not injected into page. This can happen on chrome://, edge://, about: pages, or when "Allow access to file URLs" is disabled for file:// pages.', resp.note || ''); } catch {}
-          }
-          if (!resp.tabId && resp.ok === false) {
-            try { console.warn('[Admin] HTML/DOM LAYOUT: Background reported an error:', resp.note || '(unknown)'); } catch {}
-          } else if (!resp.tabId) {
-            try { console.warn('[Admin] HTML/DOM LAYOUT: No target tab resolved. Use Refresh Target to capture the active tab.'); } catch {}
-          }
-        } else {
-          try { console.warn('[Admin] HTML/DOM LAYOUT: No response from background.'); } catch {}
-        }
-      });
-    } catch (e) {
-      try { console.error('[Admin] HTML/DOM LAYOUT: Enable exception:', e && (e.message || e)); } catch {}
-    }
-  });
-  htmlDomDisable?.addEventListener('click', () => {
-    const payload = { command: 'setHtmlDomLayoutEnabled', enabled: false };
-    if (typeof htmlDomCurrentTabId === 'number') payload.tabId = htmlDomCurrentTabId;
-    try { console.log('[Admin] HTML/DOM LAYOUT: Disable clicked', payload); } catch {}
-    try {
-      chrome.runtime.sendMessage(payload, (resp) => {
-        if (chrome.runtime.lastError) {
-          try { console.error('[Admin] HTML/DOM LAYOUT: Disable failed:', chrome.runtime.lastError.message || chrome.runtime.lastError); } catch {}
-          return;
-        }
-        setHtmlDomBadge(false);
-        if (resp) {
-          const info = {
-            ok: resp.ok,
-            enabled: resp.enabled,
-            tabId: resp.tabId,
-            tabUrl: resp.tabUrl,
-            injected: resp.injected,
-            note: resp.note || null,
-          };
-          try { console.log('[Admin] HTML/DOM LAYOUT: Disable response', info); } catch {}
-          if (resp && htmlDomTarget) {
-            const extra = resp.note ? `\nNote: ${resp.note}` : '';
-            if (resp.tabUrl) htmlDomTarget.textContent = `tabId=${resp.tabId} - ${resp.tabUrl}${extra}`;
-            else if (extra) htmlDomTarget.textContent += extra;
-          }
-        } else {
-          try { console.warn('[Admin] HTML/DOM LAYOUT: No response from background.'); } catch {}
-        }
-      });
-    } catch (e) {
-      try { console.error('[Admin] HTML/DOM LAYOUT: Disable exception:', e && (e.message || e)); } catch {}
-    }
-  });
-
-  // Refresh and display the current active target tab (independent of mic)
-  async function refreshHtmlDomTarget() {
-    const write = (tab) => {
-      if (!htmlDomTarget) return;
-      if (tab && typeof tab.id === 'number') {
-        const title = tab.title || '(no title)';
-        const url = tab.url || '';
-        htmlDomTarget.textContent = `tabId=${tab.id} - ${title} \n${url}`;
-        htmlDomCurrentTabId = tab.id;
-      } else {
-        htmlDomTarget.textContent = 'No active tab resolved. Click Refresh Target while a page is focused.';
-        htmlDomCurrentTabId = null;
-      }
-    };
-    try {
-      // Prefer active target tab first
-      chrome.runtime.sendMessage({ command: 'getActiveTargetTab' }, (r2) => {
-        const tab = r2 && r2.tab ? r2.tab : null;
-        write(tab);
-      });
-    } catch { write(null); }
-  }
-  refreshHtmlDomTarget();
-  htmlDomRefresh?.addEventListener('click', refreshHtmlDomTarget);
 
   toggleBtn.addEventListener('click', async () => {
     // Always resolve current target before toggling (matches keyboard behavior)
@@ -208,25 +81,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       });
     }
-    if (msg?.event === 'htmlDomLayoutSync') {
-      try {
-        const enabled = !!msg.enabled;
-        const badge = document.getElementById('htmlDomBadge');
-        if (badge) {
-          badge.textContent = enabled ? 'ON' : 'OFF';
-          badge.classList.toggle('on', enabled);
-          badge.classList.toggle('off', !enabled);
-        }
-      } catch {}
-    }
-  });
-
-  openForm.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const url = normalizeUrl(urlInput.value);
-    if (!url) return;
-    chrome.runtime.sendMessage({ command: 'openTab', url });
-    urlInput.value = '';
   });
 
   listBtn.addEventListener('click', () => {

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Hey Nano",
   "version": "1.0",
-  "description": "Activates mic on 'hey nano' and logs speech to console (only active tab).",
+  "description": "Per-tab AI sidebar that keeps chat in sync, captures highlighted context, and lays groundwork for voice-controlled automation.",
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
