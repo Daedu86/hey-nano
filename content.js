@@ -10,22 +10,153 @@ let sttEngine = null;
 let recognition = null; // fallback for legacy Web Speech path
 let micActive = false;
 let session = null;
+let sessionSupportsImages = false;
+const LLM_IMAGE_SEND_LIMIT = 2;
+
+function normalizeLLMOutput(result) {
+  const seen = new Set();
+  const walk = (node) => {
+    if (node == null) return [];
+    const type = typeof node;
+    if (type === 'string') return [node];
+    if (type === 'number' || type === 'boolean') return [String(node)];
+    if (Array.isArray(node)) {
+      return node.flatMap(walk);
+    }
+    if (type === 'object') {
+      if (seen.has(node)) return [];
+      seen.add(node);
+      const priorityKeys = [
+        'output',
+        'response',
+        'result',
+        'content',
+        'message',
+        'text',
+        'value',
+        'data'
+      ];
+      let collected = [];
+      for (const key of priorityKeys) {
+        if (Object.prototype.hasOwnProperty.call(node, key)) {
+          collected = collected.concat(walk(node[key]));
+        }
+      }
+      if (!collected.length && Object.prototype.hasOwnProperty.call(node, 'choices')) {
+        collected = collected.concat(walk(node.choices));
+      }
+      if (!collected.length && Object.prototype.hasOwnProperty.call(node, 'candidates')) {
+        collected = collected.concat(walk(node.candidates));
+      }
+      if (!collected.length && Object.prototype.hasOwnProperty.call(node, 'messages')) {
+        collected = collected.concat(walk(node.messages));
+      }
+      if (!collected.length) {
+        for (const val of Object.values(node)) {
+          collected = collected.concat(walk(val));
+        }
+      }
+      return collected;
+    }
+    return [];
+  };
+  const chunks = walk(result).map((chunk) => chunk.trim()).filter(Boolean);
+  return chunks.join('\n\n');
+}
+
+function dataUrlToBlob(dataUrl) {
+  try {
+    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) return null;
+    const parts = dataUrl.split(',');
+    if (parts.length !== 2 || !/;base64$/i.test(parts[0])) return null;
+    const mimeMatch = /^data:([^;]+);/i.exec(parts[0]);
+    const mime = mimeMatch ? mimeMatch[1] : 'image/png';
+    const binary = atob(parts[1]);
+    const len = binary.length;
+    const buffer = new Uint8Array(len);
+    for (let i = 0; i < len; i += 1) {
+      buffer[i] = binary.charCodeAt(i);
+    }
+    return new Blob([buffer], { type: mime });
+  } catch (err) {
+    console.warn('Failed to convert data URL to Blob:', err);
+    return null;
+  }
+}
 
 // Create an LLM session using available browser AI APIs.
 // Priority: experimental LanguageModel -> Web AI (window.ai) -> null
 async function createLLMSession(systemContent) {
+  sessionSupportsImages = false;
   try {
-    // 1) Experimental LanguageModel (as previously used)
     if (typeof window !== 'undefined' && window.LanguageModel && typeof LanguageModel.create === 'function') {
-      return await LanguageModel.create({
-        outputLanguage: 'en',
+      const multimodalOptions = {
+        expectedInputs: [
+          { type: 'image', languages: ['en'] },
+          { type: 'text', languages: ['en'] },
+        ],
+        expectedOutputs: [{ type: 'text', languages: ['en'] }],
         initialPrompts: [
-          { role: 'system', content: systemContent }
-        ]
-      });
+          { role: 'system', content: systemContent },
+        ],
+        outputLanguage: 'en',
+      };
+      let canUseImages = typeof LanguageModel.availability !== 'function';
+      if (!canUseImages) {
+        try {
+          const availability = await LanguageModel.availability(multimodalOptions);
+          if (availability) {
+            const status = availability.status;
+            canUseImages = status === 'ready' || status === 'downloading' || status === 'downloadable';
+          }
+        } catch (availabilityError) {
+          console.warn('LanguageModel availability check failed (multimodal):', availabilityError);
+        }
+      }
+      if (canUseImages) {
+        try {
+          const multimodalSession = await LanguageModel.create(multimodalOptions);
+          if (multimodalSession) {
+            sessionSupportsImages = true;
+            console.log('LLM ready (multimodal).');
+            return multimodalSession;
+          }
+        } catch (multiErr) {
+          console.warn('LanguageModel multimodal session failed:', multiErr);
+        }
+      }
+
+      const textOnlyOptions = {
+        expectedInputs: [{ type: 'text', languages: ['en'] }],
+        expectedOutputs: [{ type: 'text', languages: ['en'] }],
+        initialPrompts: [
+          { role: 'system', content: systemContent },
+        ],
+        outputLanguage: 'en',
+      };
+      if (typeof LanguageModel.availability === 'function') {
+        try {
+          const textAvailability = await LanguageModel.availability(textOnlyOptions);
+          if (textAvailability && textAvailability.status === 'unavailable') {
+            throw new Error('LanguageModel text-only session unavailable');
+          }
+        } catch (textAvailErr) {
+          console.warn('LanguageModel availability check failed (text-only):', textAvailErr);
+        }
+      }
+      try {
+        const textSession = await LanguageModel.create(textOnlyOptions);
+        if (textSession) {
+          sessionSupportsImages = false;
+          console.log('LLM ready.');
+          return textSession;
+        }
+      } catch (textErr) {
+        console.warn('LanguageModel text-only session failed:', textErr);
+      }
     }
-  } catch (e) {
-    console.warn('LanguageModel.create failed, trying window.ai:', e);
+  } catch (langErr) {
+    console.warn('LanguageModel access failed, trying window.ai:', langErr);
   }
 
   // 2) Web AI APIs (window.ai). Several shapes exist; normalize to a session with prompt(messages[]).
@@ -39,18 +170,24 @@ async function createLLMSession(systemContent) {
         const last = Array.isArray(messages) ? messages[messages.length - 1] : { content: String(messages || '') };
         const input = String(last?.content ?? '');
         return await textSession.prompt(input);
-      }
+      },
     });
 
     // Newer API shape: ai.languageModel.create({ systemPrompt })
     if (ai.languageModel && typeof ai.languageModel.create === 'function') {
       const textSession = await ai.languageModel.create({ systemPrompt: systemContent, topK: 40 });
-      if (textSession && typeof textSession.prompt === 'function') return wrap(textSession);
+      if (textSession && typeof textSession.prompt === 'function') {
+        sessionSupportsImages = false;
+        return wrap(textSession);
+      }
     }
     // Legacy/alternate: ai.createTextSession({ systemPrompt })
     if (typeof ai.createTextSession === 'function') {
       const textSession = await ai.createTextSession({ systemPrompt: systemContent });
-      if (textSession && typeof textSession.prompt === 'function') return wrap(textSession);
+      if (textSession && typeof textSession.prompt === 'function') {
+        sessionSupportsImages = false;
+        return wrap(textSession);
+      }
     }
   } catch (e) {
     console.warn('window.ai session creation failed:', e);
@@ -130,12 +267,33 @@ function enableDomHighlights() {
   } catch (e) {}
 }
 
+
+let domHighlightResetTimer = null;
+
+function scheduleDomHighlightReset() {
+  try {
+    const head = document.head || document.documentElement;
+    if (!head) return;
+    const existing = document.getElementById('hey-mic-dom-highlight-reset');
+    if (existing) existing.remove();
+    const resetStyle = document.createElement('style');
+    resetStyle.id = 'hey-mic-dom-highlight-reset';
+    resetStyle.textContent = 'div,button,input[type="button"],input[type="submit"],[role="button"],a[role="button"] { outline: none !important; background-color: transparent !important; }';
+    head.appendChild(resetStyle);
+    if (domHighlightResetTimer) clearTimeout(domHighlightResetTimer);
+    domHighlightResetTimer = setTimeout(() => {
+      try { resetStyle.remove(); } catch {}
+      domHighlightResetTimer = null;
+    }, 200);
+  } catch {}
+}
 function disableDomHighlights() {
   try {
     const style = document.getElementById('hey-mic-dom-highlight-style');
     if (style && style.parentNode) style.parentNode.removeChild(style);
     console.log('Hey Nano: DOM highlight disabled');
   } catch (e) {}
+  scheduleDomHighlightReset();
 }
 
 // "Lift on hover" virtual spotlight: raise hovered element visually above page
@@ -164,6 +322,9 @@ let scaleLabelEl = null;
 let domLiftScaleLocal = 1.15;
 let bgBtnEl = null;
 let blackPadEl = null;
+const ENABLE_DOM_LIFT_TOOLBAR = false;
+const DOM_HIGHLIGHT_BODY_LIMIT = 1200;
+const DOM_HIGHLIGHT_TITLE_LIMIT = 80;
 
 function ensureDimOverlay() {
   if (document.getElementById('hey-mic-dim')) return;
@@ -229,7 +390,7 @@ function enableDomLift() {
       const t = e.target;
       if (!t || !(t instanceof Element)) return;
       // Keep toolbar aligned and update preview while hovering
-      if (domLift.current) updateSummarizeBtn(domLift.current);
+      if (ENABLE_DOM_LIFT_TOOLBAR && domLift.current) updateSummarizeBtn(domLift.current);
       const hoverEl = findLiftTarget(t);
       updatePreview(hoverEl && !isPinned(hoverEl) ? hoverEl : null);
       const el = findLiftTarget(t);
@@ -239,7 +400,7 @@ function enableDomLift() {
   ensureDimOverlay();
   document.addEventListener('mousemove', domLift.handler, true);
   // Track scroll/resize to keep toolbar aligned when a current pinned exists
-  domLift.scrollHandler = () => { if (domLift.current && isPinned(domLift.current)) updateSummarizeBtn(domLift.current); };
+  domLift.scrollHandler = () => { if (ENABLE_DOM_LIFT_TOOLBAR && domLift.current && isPinned(domLift.current)) updateSummarizeBtn(domLift.current); };
   const _prev = domLift.scrollHandler;
   domLift.scrollHandler = () => {
     if (domLift.current && isPinned(domLift.current)) {
@@ -305,7 +466,7 @@ function applyLiftTo(el) {
   }
   domLift.current = el;
   try { el.classList.add('hey-mic-lifted'); } catch {}
-  updateSummarizeBtn(el);
+  if (ENABLE_DOM_LIFT_TOOLBAR) updateSummarizeBtn(el);
   if (domLift.bgOn) updateBlackPad(el);
 }
 
@@ -327,6 +488,7 @@ function findLiftTarget(node) {
 // (spotlight positioning removed; using uniform dim instead)
 
 function ensureSummarizeBtn() {
+  if (!ENABLE_DOM_LIFT_TOOLBAR) return null;
   if (summarizeBtnEl && document.body.contains(summarizeBtnEl)) return summarizeBtnEl;
   const wrap = document.createElement('div');
   wrap.id = 'hey-mic-sum-btn';
@@ -477,6 +639,7 @@ function ensureSummarizeBtn() {
 }
 
 function hideSummarizeBtn() {
+  if (!ENABLE_DOM_LIFT_TOOLBAR) return;
   if (summarizeBtnEl && summarizeBtnEl.parentNode) {
     summarizeBtnEl.parentNode.removeChild(summarizeBtnEl);
   }
@@ -484,7 +647,9 @@ function hideSummarizeBtn() {
 }
 
 function updateSummarizeBtn(el) {
+  if (!ENABLE_DOM_LIFT_TOOLBAR) return;
   const btn = ensureSummarizeBtn();
+  if (!btn) return;
   try {
     if (isPinned(el)) {
       // Ensure the panel is rendered inside the pinned element
@@ -526,7 +691,7 @@ function togglePinCurrent() {
     pinElement(el);
   }
   if (pinBtnEl) pinBtnEl.textContent = isPinned(el) ? 'Unpin' : 'Pin';
-  updateSummarizeBtn(el);
+  if (ENABLE_DOM_LIFT_TOOLBAR) updateSummarizeBtn(el);
   try { console.log('Hey Nano: DOM lift', isPinned(el) ? 'pinned' : 'unpinned'); } catch {}
 }
 
@@ -548,7 +713,9 @@ function pinElement(el) {
     try { el.classList.add('hey-mic-pinned'); } catch {}
     domLift.pinned.set(el, { savedStyle });
     // Place the control panel inside the pinned element
-    try { attachPanelToPinned(el); domLift.panelManualPos = false; } catch {}
+    if (ENABLE_DOM_LIFT_TOOLBAR) {
+      try { attachPanelToPinned(el); domLift.panelManualPos = false; } catch {}
+    }
   } catch {}
 }
 
@@ -570,7 +737,9 @@ function unpinElement(el) {
     }
     if (domLift.pinned) domLift.pinned.delete(el);
     // Detach the panel back to body and reset manual position state
-    try { detachPanelFromPinned(el); } catch {}
+    if (ENABLE_DOM_LIFT_TOOLBAR) {
+      try { detachPanelFromPinned(el); } catch {}
+    }
   } catch {}
 }
 
@@ -626,7 +795,9 @@ function snapshotInlineStyle(el) {
 }
 
 function attachPanelToPinned(el) {
+  if (!ENABLE_DOM_LIFT_TOOLBAR) return;
   const btn = ensureSummarizeBtn();
+  if (!btn) return;
   if (btn.parentElement !== el) {
     el.appendChild(btn);
   }
@@ -635,7 +806,7 @@ function attachPanelToPinned(el) {
 }
 
 function detachPanelFromPinned(el) {
-  if (!summarizeBtnEl) return;
+  if (!ENABLE_DOM_LIFT_TOOLBAR || !summarizeBtnEl) return;
   if (summarizeBtnEl.parentElement === el) {
     document.body.appendChild(summarizeBtnEl);
     summarizeBtnEl.style.position = 'fixed';
@@ -701,7 +872,7 @@ function enableElementDrag(el) {
       el.style.left = left + 'px';
       el.style.top = top + 'px';
       // keep panel aligned if not manually moved
-      if (!domLift.panelManualPos) {
+      if (ENABLE_DOM_LIFT_TOOLBAR && !domLift.panelManualPos) {
         try { updateSummarizeBtn(el); } catch {}
       }
     } catch {}
@@ -947,6 +1118,91 @@ function extractSummarizableText(el, maxLen = 4000) {
   } catch { return ''; }
 }
 
+function normalizeHighlightValue(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function describeElementPath(el, maxDepth = 4) {
+  const parts = [];
+  let node = el;
+  let depth = 0;
+  while (node && depth < maxDepth) {
+    const tag = (node.tagName || '').toLowerCase();
+    if (!tag || tag === 'html') break;
+    let segment = tag;
+    const id = normalizeHighlightValue(node.id || '');
+    if (id) {
+      segment += `#${id}`;
+    } else {
+      const className = normalizeHighlightValue((node.className || '').toString());
+      const classes = className ? className.split(/\s+/).filter(Boolean).slice(0, 2) : [];
+      if (classes.length) {
+        segment += `.${classes.join('.')}`;
+      } else {
+        const dataTestid = normalizeHighlightValue(node.getAttribute && node.getAttribute('data-testid'));
+        if (dataTestid) segment += `[data-testid="${dataTestid}"]`;
+      }
+    }
+    parts.unshift(segment);
+    node = node.parentElement;
+    depth += 1;
+  }
+  if (!parts.length) return '';
+  return parts.join(' > ');
+}
+
+function deriveHighlightTitle(el, text, descriptor) {
+  const candidates = [
+    el && normalizeHighlightValue(el.getAttribute && el.getAttribute('aria-label')),
+    el && normalizeHighlightValue(el.getAttribute && el.getAttribute('data-testid')),
+    el && normalizeHighlightValue(el.getAttribute && el.getAttribute('title')),
+    el && normalizeHighlightValue(el.getAttribute && el.getAttribute('alt')),
+  ].filter(Boolean);
+  if (candidates.length) return candidates[0].slice(0, DOM_HIGHLIGHT_TITLE_LIMIT);
+  const firstLine = text
+    ? text.split(/\n+/).map((line) => line.trim()).find(Boolean)
+    : '';
+  if (firstLine) return firstLine.slice(0, DOM_HIGHLIGHT_TITLE_LIMIT);
+  if (descriptor) {
+    const segments = descriptor.split(' > ');
+    const last = segments[segments.length - 1];
+    if (last) return last.slice(0, DOM_HIGHLIGHT_TITLE_LIMIT);
+  }
+  const tag = (el && el.tagName ? el.tagName.toLowerCase() : 'element') || 'element';
+  return tag.slice(0, DOM_HIGHLIGHT_TITLE_LIMIT);
+}
+
+function buildDomHighlightSnippet() {
+  const el = domLift && domLift.current instanceof Element ? domLift.current : null;
+  if (!domLift.enabled || !el) {
+    return { ok: false, error: 'no-highlight' };
+  }
+  const text = extractSummarizableText(el, DOM_HIGHLIGHT_BODY_LIMIT);
+  const descriptor = describeElementPath(el, 5);
+  const trimmedText = normalizeHighlightValue(text);
+  const sections = [];
+  if (descriptor) sections.push(`Element: ${descriptor}`);
+  if (trimmedText) sections.push(trimmedText);
+  let body = sections.join('\n\n').trim();
+  if (!body) {
+    const html = normalizeHighlightValue((el.outerHTML || '').replace(/\s+/g, ' '));
+    if (html) {
+      const truncated = html.length > DOM_HIGHLIGHT_BODY_LIMIT ? `${html.slice(0, DOM_HIGHLIGHT_BODY_LIMIT)} ...` : html;
+      body = `HTML: ${truncated}`;
+    }
+  }
+  if (!body) body = 'Captured highlighted element.';
+  const title = deriveHighlightTitle(el, trimmedText, descriptor);
+  const snippet = {
+    title,
+    body,
+    images: [],
+    descriptor,
+    url: location.href,
+  };
+  return { ok: true, snippet };
+}
+
 async function summarizeTextWithLLM(text) {
   try {
     if (!session) await initLLM();
@@ -956,7 +1212,8 @@ async function summarizeTextWithLLM(text) {
     }
     const prompt = `Summarize the following content succinctly in English. Use short bullet points when helpful.\n\nContent:\n"""\n${text}\n"""`;
     const result = await session.prompt([{ role: 'user', content: prompt }]);
-    const summary = String(result || '').trim();
+    let summary = normalizeLLMOutput(result).trim();
+    if (!summary) summary = 'Sorry, I could not find a good response.';
     console.log('Hey Nano: Summary ->', summary);
     try {
       chrome.runtime.sendMessage({ event: 'llm', text: summary, ts: Date.now(), tokens: estimateTokens(summary), chars: summary.length });
@@ -1353,16 +1610,58 @@ async function initLLM() {
 }
 
 // Send voice input to the LLM and log the response
-async function sendToLLM(userInput) {
+async function sendToLLM(userInput, contextEntries = []) {
   if (!session) {
     console.warn("LLM not available.");
     return;
   }
-  // Provide page context (the system prompt already describes voice commands once per session)
-  const contextPrompt = `You are on the webpage titled "${document.title}" at URL: ${location.href}.\nPage content: ${getPageText()}\nUser says: ${userInput}`;
+  const pageSummary = `You are on the webpage titled "${document.title}" at URL: ${location.href}.`;
+  const contextSection = buildContextSection(contextEntries);
+  const contextPrompt = `${pageSummary}\nPage content: ${getPageText()}${contextSection}\nUser says: ${userInput}`;
   try {
-    const result = await session.prompt([{ role: "user", content: contextPrompt }]);
-    let text = (result || "").trim();
+    let rawResult;
+    if (sessionSupportsImages && Array.isArray(contextEntries)) {
+      const imageContents = [];
+      let remainingImages = LLM_IMAGE_SEND_LIMIT;
+      contextEntries.forEach((entry) => {
+        if (!remainingImages || !entry || !Array.isArray(entry.images)) return;
+        const snippetTitle = typeof entry.title === 'string' ? entry.title.trim() : '';
+        const snippetBody = typeof entry.body === 'string' ? entry.body.trim() : '';
+        const snippetNote = snippetTitle || (snippetBody ? `Snippet context: ${snippetBody.slice(0, 160)}` : '');
+        let snippetNoteUsed = false;
+        entry.images.forEach((img) => {
+          if (!remainingImages || !img) return;
+          const dataUrl = typeof img.dataUrl === 'string' ? img.dataUrl : '';
+          const blob = dataUrlToBlob(dataUrl);
+          if (!blob) return;
+          imageContents.push({ type: 'image', data: blob });
+          const noteParts = [];
+          if (!snippetNoteUsed && snippetNote) {
+            noteParts.push(snippetNote);
+            snippetNoteUsed = true;
+          }
+          const imageLabel = typeof img.name === 'string' ? img.name.trim() : '';
+          if (imageLabel) noteParts.push(`Image label: ${imageLabel}`);
+          if (noteParts.length) {
+            imageContents.push({ type: 'text', text: noteParts.join(' | ') });
+          }
+          remainingImages -= 1;
+        });
+      });
+      if (imageContents.length) {
+        const contentParts = [...imageContents, { type: 'text', text: contextPrompt }];
+        rawResult = await session.prompt([{ role: 'user', content: contentParts }]);
+      } else {
+        rawResult = await session.prompt([{ role: 'user', content: contextPrompt }]);
+      }
+    } else {
+      rawResult = await session.prompt([{ role: 'user', content: contextPrompt }]);
+    }
+    let text = normalizeLLMOutput(rawResult).trim();
+    if (!text) {
+      console.warn('LLM returned empty output.', rawResult);
+      text = 'Sorry, I could not find a good response.';
+    }
     const askedNav = /\b(open|go to|navigate to|visit)\b/i.test(userInput);
     if (!askedNav) {
       text = text
@@ -1380,11 +1679,11 @@ async function sendToLLM(userInput) {
         chars: text.length
       });
     } catch (e) {}
-    // Note: Opening tabs is driven ONLY by explicit user speech parsing.
   } catch (e) {
     console.error("LLM prompt failed:", e);
   }
 }
+
 
 // Get visible text from the page (compact)
 function getPageText(maxLength = 5000) {
@@ -1392,8 +1691,69 @@ function getPageText(maxLength = 5000) {
   return t.length > maxLength ? t.slice(0, maxLength) + " ..." : t;
 }
 
+function buildContextSection(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) return '';
+  const lines = entries
+    .map((entry, idx) => {
+      const title = typeof entry?.title === 'string' ? entry.title.trim() : '';
+      const body = typeof entry?.body === 'string' ? entry.body.trim() : '';
+      const preview = typeof entry?.preview === 'string' ? entry.preview.trim() : '';
+      const highlights = Array.isArray(entry?.highlights)
+        ? entry.highlights.map((line) => (typeof line === 'string' ? line.trim() : '')).filter(Boolean)
+        : [];
+      const meta = entry && typeof entry.meta === 'object' ? entry.meta : null;
+      const images = Array.isArray(entry?.images)
+        ? entry.images
+          .map((img) => (typeof img?.name === 'string' ? img.name.trim() : ''))
+          .filter(Boolean)
+        : [];
+      if (!title && !body && !preview && !highlights.length && !images.length) return '';
+      const heading = title ? `Snippet ${idx + 1}: ${title}` : `Snippet ${idx + 1}`;
+      const details = [];
+      if (preview && (!body || preview !== body)) details.push(`Summary: ${preview}`);
+      if (body) details.push(body);
+      if (images.length) details.push(`Attached images: ${images.join(', ')}`);
+      if (highlights.length) {
+        const formatted = highlights.map((line) => `- ${line}`).join('\n');
+        details.push(`Highlights:\n${formatted}`);
+      }
+      if (meta) {
+        const metaParts = [];
+        if (typeof meta.createdAt === 'number' && Number.isFinite(meta.createdAt)) {
+          try {
+            metaParts.push(`Captured: ${new Date(meta.createdAt).toLocaleString()}`);
+          } catch {}
+        }
+        if (typeof meta.imageCount === 'number' && meta.imageCount > 0) {
+          metaParts.push(`Image count: ${meta.imageCount}`);
+        }
+        if (metaParts.length) details.push(metaParts.join('; '));
+      }
+      return details.length ? `${heading}\n${details.join('\n')}` : heading;
+    })
+    .filter(Boolean);
+  if (!lines.length) return '';
+  return `\n\nShared context snippets:\n${lines.join('\n\n')}`;
+}
+
 // Get reference to command helpers
 function Commands() { return window.HeyNanoCommands || {}; }
+
+function describeSpeechRecognitionError(event) {
+  const codeRaw = event && (event.error || event.message);
+  const code = typeof codeRaw === 'string' ? codeRaw.toLowerCase() : 'unknown';
+  const hints = {
+    'not-allowed': 'Microphone permission was blocked. Allow mic access for this site in the Chrome address bar and try again.',
+    'service-not-allowed': 'Speech recognition is disabled in Chrome. Enable it under chrome://settings/content/microphone and reload.',
+    'network': 'Speech recognition service is unavailable. Check your internet connection and try again.',
+    'no-speech': 'No speech was detected. Ensure your microphone is working and speak clearly.',
+    'aborted': 'Speech recognition stopped unexpectedly, possibly because another app is using the microphone.',
+    'audio-capture': 'Could not access your microphone. Verify it is connected, not muted, and allowed in Chrome.'
+  };
+  if (hints[code]) return hints[code];
+  if (event && typeof event.message === 'string' && event.message.trim()) return event.message.trim();
+  return `Microphone error (${code || 'unknown'}).`;
+}
 
 function startMic() {
   if (micActive) return;
@@ -1480,6 +1840,33 @@ function startMic() {
 
             if (session || (typeof window !== 'undefined' && (window.LanguageModel || window.ai))) {
               await sendToLLM(transcript);
+            }
+          },
+          onError: (event) => {
+            const code = event && typeof event.error === 'string' ? event.error.toLowerCase() : '';
+            if (code === 'no-speech') {
+              return;
+            }
+            console.warn('Speech recognition error:', event);
+            const detail = describeSpeechRecognitionError(event || {});
+            try {
+              chrome.runtime.sendMessage({
+                event: 'system',
+                type: 'mic',
+                state: 'error',
+                detail,
+                code: event && event.error ? event.error : 'unknown',
+                ts: Date.now()
+              });
+            } catch (e) {}
+            micActive = false;
+            stopMic();
+          },
+          onStop: () => {
+            const wasActive = micActive;
+            micActive = false;
+            if (wasActive) {
+              try { chrome.runtime.sendMessage({ event: 'system', type: 'mic', state: 'disabled', ts: Date.now(), source: 'sttStop' }); } catch (e) {}
             }
           }
         });
@@ -1577,6 +1964,26 @@ function startMic() {
     }
   };
 
+  rec.onerror = (event) => {
+    const code = event && typeof event.error === 'string' ? event.error.toLowerCase() : '';
+    if (code === 'no-speech') {
+      return;
+    }
+    console.warn('Web Speech API error:', event);
+    const detail = describeSpeechRecognitionError(event || {});
+    try {
+      chrome.runtime.sendMessage({
+        event: 'system',
+        type: 'mic',
+        state: 'error',
+        detail,
+        code: event && event.error ? event.error : 'unknown',
+        ts: Date.now()
+      });
+    } catch (e) {}
+    stopMic();
+  };
+
   rec.onend = () => { if (micActive) rec.start(); };
   rec.start();
 }
@@ -1598,8 +2005,13 @@ function stopMic() {
   try { /* overlay disabled */ } catch {}
 }
 
-// Listen to extension activation
-chrome.runtime.onMessage.addListener((msg) => {
+// Listen to extension activation and highlight capture requests
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.command === 'getDomHighlightSnippet') {
+    const payload = buildDomHighlightSnippet();
+    if (typeof sendResponse === 'function') sendResponse(payload);
+    return true;
+  }
   if (msg.command === "activate" && document.visibilityState === "visible") {
     chrome.runtime.sendMessage({ command: "stopAllMics" }, () => {
       setTimeout(() => { initLLM().then(() => startMic()); }, 200);
@@ -1608,6 +2020,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.command === "stop") stopMic();
   if (msg.command === "userTypedInput") {
     const manualText = typeof msg.text === 'string' ? msg.text.trim() : '';
+    const manualContext = Array.isArray(msg.context) ? msg.context : [];
     if (manualText) {
       try {
         chrome.runtime.sendMessage({
@@ -1618,7 +2031,7 @@ chrome.runtime.onMessage.addListener((msg) => {
           chars: manualText.length
         });
       } catch (e) {}
-      initLLM().catch(() => {}).then(() => sendToLLM(manualText));
+      initLLM().catch(() => {}).then(() => sendToLLM(manualText, manualContext));
     }
   }
   // HTML/DOM LAYOUT grid toggle
@@ -1628,11 +2041,18 @@ chrome.runtime.onMessage.addListener((msg) => {
       createDomGridOverlay(msg.options || {});
       enableDomHighlights();
       enableDomLift();
+      try { console.log('Hey Nano: DOM grid enabled'); } catch {}
     } else if (msg.state === 'disabled') {
       removeDomGridOverlay();
       disableDomHighlights();
       disableDomLift();
     }
+  }
+  if (msg && msg.event === 'domHighlightForceCleanup') {
+    try { removeDomGridOverlay(); } catch {}
+    try { disableDomHighlights(); } catch {}
+    try { disableDomLift(); } catch {}
+    return;
   }
   if (msg && msg.event === 'layoutOpinion') {
     try { askLayoutOpinion(); } catch {}
@@ -1653,7 +2073,16 @@ chrome.runtime.onMessage.addListener((msg) => {
       console.log('Hey Nano: DOM lift scale set to', scale);
     } catch {}
   }
+
+  return false;
 });
 
 
 })();
+
+
+
+
+
+
+

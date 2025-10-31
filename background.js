@@ -13,14 +13,267 @@ let domLiftScale = 1.15; // default lift scale
 let menusReady = false;
 const POPUP_HTML_PATH = 'user_popup.html';
 const sidePanelAvailable = !!(chrome.sidePanel && typeof chrome.sidePanel.setOptions === 'function' && typeof chrome.sidePanel.open === 'function');
+const sidePanelOpenTabs = new Set(); // tabIds with side panel currently open
+const tabSessions = new Map(); // tabId -> { sessionId, url }
+const TYPED_CONTEXT_LIMIT = 5;
+const TYPED_CONTEXT_TITLE_LIMIT = 80;
+const TYPED_CONTEXT_BODY_LIMIT = 1200;
+const TYPED_CONTEXT_IMAGE_LIMIT = 3;
+const TYPED_CONTEXT_IMAGE_NAME_LIMIT = 80;
+const TYPED_CONTEXT_IMAGE_DATAURL_LIMIT = 2 * 1024 * 1024; // base64 char cap per image payload
+const TYPED_CONTEXT_PREVIEW_LIMIT = 600;
+const TYPED_CONTEXT_HIGHLIGHT_LIMIT = 3;
+const TYPED_CONTEXT_HIGHLIGHT_LENGTH = 220;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const INTERNAL_PROTOCOLS = new Set(['chrome:', 'edge:', 'about:', 'chrome-untrusted:', 'devtools:', 'chrome-search:', 'chrome-native:']);
 
-function prepareSidePanelForTab(tabId) {
-  if (!sidePanelAvailable || typeof tabId !== 'number') return;
+function parseUrlSafe(raw) {
+  if (!raw || typeof raw !== 'string') return null;
   try {
-    chrome.sidePanel.setOptions({ tabId, path: POPUP_HTML_PATH, enabled: true }, () => {
+    return new URL(raw);
+  } catch {
+    return null;
+  }
+}
+
+function isRestrictedInternalUrl(raw) {
+  if (!raw || typeof raw !== 'string') return false;
+  const trimmed = raw.trim();
+  if (!trimmed) return false;
+  const parsed = parseUrlSafe(trimmed);
+  if (parsed) {
+    if (INTERNAL_PROTOCOLS.has(parsed.protocol)) {
+      return true;
+    }
+    // Some Chrome variants expose the New Tab page as chrome://new-tab-page/
+    if ((parsed.protocol === 'chrome:' || parsed.protocol === 'edge:') && parsed.hostname) {
+      const host = parsed.hostname.toLowerCase();
+      if (host === 'newtab' || host === 'new-tab-page') return true;
+    }
+  } else {
+    const lower = trimmed.toLowerCase();
+    if (lower.startsWith('chrome://') || lower.startsWith('edge://') || lower.startsWith('about:') || lower.startsWith('devtools://')) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isRestrictedTab(tab) {
+  if (!tab) return false;
+  const primary = typeof tab.url === 'string' ? tab.url.trim() : '';
+  const pending = typeof tab.pendingUrl === 'string' ? tab.pendingUrl.trim() : '';
+  const primaryRestricted = primary ? isRestrictedInternalUrl(primary) : false;
+  if (primary && !primaryRestricted) {
+    return false;
+  }
+  if (pending) {
+    const pendingRestricted = isRestrictedInternalUrl(pending);
+    if (!pendingRestricted) return false;
+    return primaryRestricted || pendingRestricted;
+  }
+  return primaryRestricted;
+}
+
+function warnRestricted(tab) {
+  const url = (tab && (tab.url || tab.pendingUrl)) || '(unknown)';
+  try {
+    console.warn(`Hey Nano: blocked UI on restricted page: ${url}`);
+  } catch {}
+}
+
+function getTabById(tabId) {
+  return new Promise((resolve) => {
+    if (typeof tabId !== 'number') {
+      resolve(null);
+      return;
+    }
+    try {
+      chrome.tabs.get(tabId, (tab) => {
+        if (chrome.runtime?.lastError) {
+          resolve(null);
+          return;
+        }
+        resolve(tab || null);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+function disableSidePanelForTab(tabId) {
+  prepareSidePanelForTab(tabId, { enabled: false });
+}
+
+function prepareSidePanelForTab(tabId, { enabled } = {}) {
+  if (!sidePanelAvailable || typeof tabId !== 'number') return;
+  const shouldEnable = enabled ?? sidePanelOpenTabs.has(tabId);
+  try {
+    chrome.sidePanel.setOptions({ tabId, path: POPUP_HTML_PATH, enabled: shouldEnable }, () => {
       void chrome.runtime?.lastError;
     });
   } catch {}
+}
+
+function generateSessionId() {
+  return `${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 10)}`;
+}
+
+function initializeTabSession(tabId, url) {
+  if (typeof tabId !== 'number') return null;
+  if (tabSessions.has(tabId)) return tabSessions.get(tabId);
+  const record = { sessionId: generateSessionId(), url: url || null };
+  tabSessions.set(tabId, record);
+  return record;
+}
+
+function resetTabSession(tabId, url) {
+  if (typeof tabId !== 'number') return null;
+  const previous = tabSessions.get(tabId);
+  const record = { sessionId: generateSessionId(), url: url || null };
+  tabSessions.set(tabId, record);
+  convoLogs.delete(tabId);
+  try {
+    chrome.runtime.sendMessage({
+      event: 'tabSessionReset',
+      tabId,
+      sessionId: record.sessionId,
+      url: record.url || '',
+      previousSessionId: previous?.sessionId || null,
+    });
+  } catch {}
+  return record;
+}
+
+async function getOrCreateTabSession(tabId) {
+  if (tabSessions.has(tabId)) return tabSessions.get(tabId);
+  const tab = await getTabById(tabId);
+  const url = tab?.url || tab?.pendingUrl || null;
+  return initializeTabSession(tabId, url);
+}
+
+function updateTabSessionUrl(tabId, url) {
+  if (!tabSessions.has(tabId)) return;
+  const record = tabSessions.get(tabId);
+  record.url = url || record.url || null;
+}
+
+function classifySidePanelError(err) {
+  const message = err && (err.message || String(err)) || '';
+  if (!message) return { severity: 'none', message: '' };
+  const lower = message.toLowerCase();
+  const fatalFragments = [
+    'not available',
+    'not supported',
+    'no tab with id',
+    'invalid tab',
+    'missing tab',
+    'window not found',
+    'cannot open side panel',
+  ];
+  if (fatalFragments.some((fragment) => lower.includes(fragment))) {
+    return { severity: 'fatal', message };
+  }
+  const ignoreFragments = [
+    'already open',
+    'already opened',
+    'already has an open side panel',
+  ];
+  if (ignoreFragments.some((fragment) => lower.includes(fragment))) {
+    return { severity: 'ignore', message };
+  }
+  const recoverableFragments = [
+    'user activation',
+    'user gesture',
+    'must be active',
+    'requires an active tab',
+  ];
+  if (recoverableFragments.some((fragment) => lower.includes(fragment))) {
+    return { severity: 'recoverable', message };
+  }
+  return { severity: 'recoverable', message };
+}
+
+function callSidePanelMethod(methodName, args) {
+  return new Promise((resolve) => {
+    try {
+      const method = chrome?.sidePanel?.[methodName];
+      if (typeof method !== 'function') {
+        resolve({ ok: false, fatal: true, message: 'method-unavailable' });
+        return;
+      }
+      method.call(chrome.sidePanel, args, () => {
+        const err = chrome.runtime?.lastError;
+        if (!err) {
+          resolve({ ok: true, fatal: false, recoverable: false, message: '' });
+          return;
+        }
+        const { severity, message } = classifySidePanelError(err);
+        if (severity === 'fatal') {
+          resolve({ ok: false, fatal: true, recoverable: false, message });
+          return;
+        }
+        if (severity === 'ignore') {
+          resolve({ ok: true, fatal: false, recoverable: false, message });
+          return;
+        }
+        resolve({ ok: false, fatal: false, recoverable: true, message });
+      });
+    } catch (e) {
+      resolve({ ok: false, fatal: true, recoverable: false, message: (e && e.message) ? e.message : String(e || '') });
+    }
+  });
+}
+
+async function openSidePanelForTab(tabOrId, attempt = 0) {
+  if (!sidePanelAvailable) return { ok: false, fatal: true, recoverable: false, message: 'unsupported' };
+  const tabId = typeof tabOrId === 'number' ? tabOrId : (tabOrId && tabOrId.id);
+  if (typeof tabId !== 'number') return { ok: false, fatal: true, recoverable: false, message: 'invalid-tab-id' };
+
+  const wasTracked = sidePanelOpenTabs.has(tabId);
+  let tab = (tabOrId && typeof tabOrId === 'object') ? tabOrId : null;
+  if (!tab || typeof tab.id !== 'number') {
+    tab = await getTabById(tabId);
+    if (!tab) {
+      sidePanelOpenTabs.delete(tabId);
+      disableSidePanelForTab(tabId);
+      return { ok: false, fatal: true, recoverable: false, message: 'tab-missing' };
+    }
+  }
+  if (isRestrictedTab(tab)) {
+    sidePanelOpenTabs.delete(tabId);
+    disableSidePanelForTab(tabId);
+    warnRestricted(tab);
+    return { ok: false, fatal: false, recoverable: false, message: 'restricted-page' };
+  }
+
+  await getOrCreateTabSession(tabId);
+  if (!wasTracked) sidePanelOpenTabs.add(tabId);
+
+  const optionsResult = await callSidePanelMethod('setOptions', { tabId, path: POPUP_HTML_PATH, enabled: true });
+  if (!optionsResult.ok) {
+    if (optionsResult.recoverable && attempt === 0) {
+      await sleep(75);
+      return openSidePanelForTab(tabId, attempt + 1);
+    }
+    sidePanelOpenTabs.delete(tabId);
+    disableSidePanelForTab(tabId);
+    return optionsResult;
+  }
+
+  const openResult = await callSidePanelMethod('open', { tabId });
+  if (!openResult.ok) {
+    if (openResult.recoverable && attempt === 0) {
+      await sleep(75);
+      return openSidePanelForTab(tabId, attempt + 1);
+    }
+    sidePanelOpenTabs.delete(tabId);
+    disableSidePanelForTab(tabId);
+    return openResult;
+  }
+
+  return { ok: true, fatal: false, recoverable: false, message: '' };
 }
 
 // Suppress noisy unhandled promise rejections from Chrome APIs when a target
@@ -70,29 +323,97 @@ async function configureSidePanelBehavior() {
   try {
     await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
     chrome.tabs.query({}, (tabs) => {
-      (tabs || []).forEach((t) => prepareSidePanelForTab(t.id));
+      (tabs || []).forEach((t) => {
+        if (!t || typeof t.id !== 'number') return;
+        initializeTabSession(t.id, t.url || t.pendingUrl || null);
+        prepareSidePanelForTab(t.id);
+      });
     });
   } catch {}
 }
 
 configureSidePanelBehavior().catch(() => {});
 
-if (sidePanelAvailable) {
-  if (chrome.tabs && typeof chrome.tabs.onCreated?.addListener === 'function') {
-    chrome.tabs.onCreated.addListener((tab) => {
-      if (tab && typeof tab.id === 'number') prepareSidePanelForTab(tab.id);
-    });
-  }
-  if (chrome.tabs && typeof chrome.tabs.onUpdated?.addListener === 'function') {
-    chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-      if (changeInfo && changeInfo.status === 'complete') prepareSidePanelForTab(tabId);
-    });
-  }
-  if (chrome.tabs && typeof chrome.tabs.onReplaced?.addListener === 'function') {
-    chrome.tabs.onReplaced.addListener((addedTabId) => {
-      prepareSidePanelForTab(addedTabId);
-    });
-  }
+if (chrome.tabs && typeof chrome.tabs.onCreated?.addListener === 'function') {
+  chrome.tabs.onCreated.addListener((tab) => {
+    if (!tab || typeof tab.id !== 'number') return;
+    if (isRestrictedTab(tab)) {
+      sidePanelOpenTabs.delete(tab.id);
+      tabSessions.delete(tab.id);
+      convoLogs.delete(tab.id);
+      disableSidePanelForTab(tab.id);
+      warnRestricted(tab);
+      return;
+    }
+    initializeTabSession(tab.id, tab.url || tab.pendingUrl || null);
+    if (sidePanelAvailable && sidePanelOpenTabs.has(tab.id)) {
+      prepareSidePanelForTab(tab.id);
+    }
+  });
+}
+
+if (chrome.tabs && typeof chrome.tabs.onUpdated?.addListener === 'function') {
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (!changeInfo) return;
+    const candidateUrl = changeInfo.url || changeInfo.pendingUrl || (tab && (tab.url || tab.pendingUrl)) || '';
+    const candidateRestricted = candidateUrl ? isRestrictedInternalUrl(candidateUrl) : false;
+    const tabRestricted = tab ? isRestrictedTab(tab) : false;
+
+    if (candidateRestricted || tabRestricted) {
+      if (sidePanelOpenTabs.has(tabId)) sidePanelOpenTabs.delete(tabId);
+      disableSidePanelForTab(tabId);
+      tabSessions.delete(tabId);
+      convoLogs.delete(tabId);
+      if (tabRestricted && tab) warnRestricted(tab);
+      return;
+    }
+
+    if (changeInfo.status === 'loading') {
+      const navUrl = candidateUrl || tab?.pendingUrl || tab?.url || null;
+      resetTabSession(tabId, navUrl);
+    } else if (candidateUrl && !tabSessions.has(tabId)) {
+      initializeTabSession(tabId, candidateUrl);
+    }
+
+    if (changeInfo.status === 'complete') {
+      updateTabSessionUrl(tabId, tab?.url || candidateUrl || null);
+    }
+
+    if (!sidePanelAvailable || !sidePanelOpenTabs.has(tabId)) return;
+    if (changeInfo.status === 'loading') {
+      prepareSidePanelForTab(tabId);
+      return;
+    }
+    if (changeInfo.status === 'complete') {
+      prepareSidePanelForTab(tabId);
+      void openSidePanelForTab(tab || tabId);
+    }
+  });
+}
+
+if (chrome.tabs && typeof chrome.tabs.onReplaced?.addListener === 'function') {
+  chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
+    const wasOpen = typeof removedTabId === 'number' ? sidePanelOpenTabs.delete(removedTabId) : false;
+    if (typeof removedTabId === 'number') {
+      tabSessions.delete(removedTabId);
+      convoLogs.delete(removedTabId);
+    }
+    if (typeof addedTabId === 'number') {
+      resetTabSession(addedTabId, null);
+      if (sidePanelAvailable && wasOpen) {
+        sidePanelOpenTabs.add(addedTabId);
+        void openSidePanelForTab(addedTabId);
+      }
+    }
+  });
+}
+
+if (chrome.tabs && typeof chrome.tabs.onRemoved?.addListener === 'function') {
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    sidePanelOpenTabs.delete(tabId);
+    tabSessions.delete(tabId);
+    convoLogs.delete(tabId);
+  });
 }
 
 function tryActivateSplitView(windowId, primaryTabId, secondaryTabId) {
@@ -135,45 +456,58 @@ function tryActivateSplitView(windowId, primaryTabId, secondaryTabId) {
 }
 
 // Open or focus the user popup UI, preferring the Chrome side panel when available
-function openOrFocusUserPopup(anchorTab) {
+async function openOrFocusUserPopup(anchorTab) {
   if (sidePanelAvailable) {
-    const openSidePanelForTab = async (tab) => {
-      if (!tab || typeof tab.id !== 'number') return false;
-      try {
-        await chrome.sidePanel.setOptions({ tabId: tab.id, path: POPUP_HTML_PATH, enabled: true });
-        await chrome.sidePanel.open({ tabId: tab.id });
-        return true;
-      } catch {
-        return false;
-      }
-    };
-
-    const dispatch = (tab) => {
-      if (!tab || typeof tab.id !== 'number') return;
-      openSidePanelForTab(tab);
-    };
-
     if (anchorTab && typeof anchorTab.id === 'number') {
-      dispatch(anchorTab);
+      if (isRestrictedTab(anchorTab)) {
+        sidePanelOpenTabs.delete(anchorTab.id);
+        disableSidePanelForTab(anchorTab.id);
+        warnRestricted(anchorTab);
+        return;
+      }
+      const result = await openSidePanelForTab(anchorTab);
+      if (!result.ok && result.fatal) await openOrFocusUserPopupLegacy(anchorTab);
       return;
     }
 
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const active = (tabs || [])[0] || null;
-      if (active) {
-        dispatch(active);
-        return;
-      }
-      chrome.windows.getAll({ windowTypes: ["normal"], populate: true }, (wins) => {
-        const focused = (wins || []).find(w => w.focused) || (wins || [])[0] || null;
-        const tab = (focused && Array.isArray(focused.tabs)) ? focused.tabs.find(t => t.active) : null;
-        if (tab) dispatch(tab);
+    await new Promise((resolve) => {
+      chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+        const active = (tabs || [])[0] || null;
+        if (active) {
+          if (isRestrictedTab(active)) {
+            sidePanelOpenTabs.delete(active.id);
+            disableSidePanelForTab(active.id);
+            warnRestricted(active);
+            resolve();
+            return;
+          }
+          const result = await openSidePanelForTab(active);
+          if (!result.ok && result.fatal) await openOrFocusUserPopupLegacy(active);
+          resolve();
+          return;
+        }
+        chrome.windows.getAll({ windowTypes: ["normal"], populate: true }, async (wins) => {
+          const focused = (wins || []).find(w => w.focused) || (wins || [])[0] || null;
+          const tab = (focused && Array.isArray(focused.tabs)) ? focused.tabs.find(t => t.active) : null;
+          if (tab) {
+            if (isRestrictedTab(tab)) {
+              sidePanelOpenTabs.delete(tab.id);
+              disableSidePanelForTab(tab.id);
+              warnRestricted(tab);
+              resolve();
+              return;
+            }
+            const result = await openSidePanelForTab(tab);
+            if (!result.ok && result.fatal) await openOrFocusUserPopupLegacy(tab);
+          }
+          resolve();
+        });
       });
     });
     return;
   }
 
-  openOrFocusUserPopupLegacy(anchorTab);
+  await openOrFocusUserPopupLegacy(anchorTab);
 }
 
 function openOrFocusUserPopupLegacy(anchorTab) {
@@ -261,10 +595,16 @@ function openOrFocusUserPopupLegacy(anchorTab) {
 }
 
 function openOrFocusUserPopupForTabId(tabId) {
-  if (typeof tabId !== 'number') return;
-  chrome.tabs.get(tabId, (tab) => {
-    if (chrome.runtime.lastError || !tab) return;
-    openOrFocusUserPopup(tab);
+  if (typeof tabId !== 'number') return Promise.resolve(false);
+  return new Promise((resolve) => {
+    chrome.tabs.get(tabId, async (tab) => {
+      if (chrome.runtime.lastError || !tab) {
+        resolve(false);
+        return;
+      }
+      await openOrFocusUserPopup(tab);
+      resolve(true);
+    });
   });
 }
 
@@ -273,7 +613,6 @@ function ensureContextMenus() {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({ id: "heyNano.disableAll", title: "Turn off Hey Nano on all tabs", contexts: ["action"] });
     chrome.contextMenus.create({ id: "heyNano.adminPanel", title: "Open Admin Panel", contexts: ["action"] });
-    chrome.contextMenus.create({ id: "heyNano.toggleDomHighlight", title: "Highlight DOM/HTML", contexts: ["action"] });
     menusReady = true;
   });
 }
@@ -311,13 +650,13 @@ function recordLog(tabId, role, text, tokens, chars) {
 
 // Display-only copy of the system prompt to show in Admin Panel
 const SYSTEM_PROMPT = (
-  "You are a helpful assistant embedded in a browser extension that supports voice commands. " +
+  "You are an intelligent assistant embedded in a browser extension that helps users interact with AI models through focused, user-defined context. " +
+  "Your primary function is to process, summarize, and generate responses based only on the content the user selects or highlights within the webpage. This ensures precision, relevance, and token efficiency. " +
   "Respond in English by default. " +
-  "When asked about your capabilities, mention both your language abilities (summarize, generate text, explain) and that the extension can execute certain browser actions via supported voice commands. " +
-  "Navigation policy: Only ask 'Which site should I open?' when the user utterance includes a navigation verb (open/go to/navigate to/visit) but lacks a specific target. " +
-  "Only confirm opening a website when the user includes a specific URL or a well-known site name. " +
-  "Never claim you cannot open external websites; the extension performs actions when the user's speech matches a supported voice command. " +
-  "Do not fabricate actions."
+  "When describing your capabilities, mention that you can summarize, explain, generate text, and answer questions about the selected context. " +
+  "The extension may also support voice commands as a secondary interaction mode. When users use voice input, you can respond naturally, and if the speech contains an actionable command (e.g., 'open', 'go to', 'navigate to'), follow the navigation policy below. " +
+  "Navigation Policy: Only ask 'Which site should I open?' when a navigation verb (open/go to/navigate to/visit) is detected without a clear target. Confirm before opening a website only when the user includes a specific URL or a well-known site name. Never claim inability to open external sites; the extension handles supported browser actions. Do not invent or simulate actions. " +
+  "Your goal is to keep the AI focused on what the user highlights — no guessing, no noise, just attention where it matters."
 );
 
 // Display-only list of supported voice commands (kept in sync with content.js behavior)
@@ -475,6 +814,24 @@ chrome.tabs.onActivated.addListener(({ tabId }) => {
   const enabled = !!micEnabledTabs.get(tabId);
   setBadge(tabId, enabled);
   if (enabled) safeSend(tabId, { command: "activate" });
+  if (sidePanelAvailable && sidePanelOpenTabs.has(tabId)) {
+    chrome.tabs.get(tabId, (tab) => {
+      if (chrome.runtime?.lastError || !tab) {
+        sidePanelOpenTabs.delete(tabId);
+        disableSidePanelForTab(tabId);
+        return;
+      }
+      if (isRestrictedTab(tab)) {
+        sidePanelOpenTabs.delete(tabId);
+        disableSidePanelForTab(tabId);
+        warnRestricted(tab);
+        return;
+      }
+      initializeTabSession(tabId, tab.url || tab.pendingUrl || null);
+      prepareSidePanelForTab(tabId);
+      void openSidePanelForTab(tab);
+    });
+  }
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
@@ -483,16 +840,40 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   }
 });
 
-// Toolbar click: inject content and activate
+// Toolbar click: just open the companion UI without changing mic state
 chrome.action.onClicked.addListener(async (tab) => {
+  if (!sidePanelAvailable) {
+    await openOrFocusUserPopupLegacy(tab);
+    return;
+  }
+  if (!tab || typeof tab.id !== 'number') return;
+  if (isRestrictedTab(tab)) {
+    sidePanelOpenTabs.delete(tab.id);
+    disableSidePanelForTab(tab.id);
+    warnRestricted(tab);
+    return;
+  }
+
   const tabId = tab.id;
-  const currentlyEnabled = !!micEnabledTabs.get(tabId);
-  if (currentlyEnabled) {
-    disableMicForTab(tabId);
-  } else {
-    await enableMicForTab(tabId);
-    // Open/focus user popup when enabling via toolbar
-    openOrFocusUserPopup(tab);
+  initializeTabSession(tabId, tab.url || tab.pendingUrl || null);
+  sidePanelOpenTabs.add(tabId);
+  prepareSidePanelForTab(tabId);
+  try {
+    chrome.sidePanel.open({ tabId }, async () => {
+      const err = chrome.runtime?.lastError;
+      if (!err) return;
+      sidePanelOpenTabs.delete(tabId);
+      const message = err.message ? String(err.message) : '';
+      const lower = message.toLowerCase();
+      const requiresGesture = lower.includes('user activation') || lower.includes('user gesture');
+      if (!requiresGesture) {
+        disableSidePanelForTab(tabId);
+      }
+      await openOrFocusUserPopupLegacy(tab);
+    });
+  } catch {
+    sidePanelOpenTabs.delete(tabId);
+    await openOrFocusUserPopupLegacy(tab);
   }
 });
 
@@ -591,6 +972,41 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ windowTokens: CONTEXT_WINDOW_TOKENS });
       return false;
     }
+    case "resetSession": {
+      const tabId = typeof msg.tabId === 'number' ? msg.tabId : null;
+      if (!tabId) {
+        if (sendResponse) sendResponse({ ok: false, error: 'invalid-tab' });
+        return false;
+      }
+      chrome.tabs.get(tabId, (tab) => {
+        if (chrome.runtime.lastError || !tab) {
+          const err = chrome.runtime.lastError ? String(chrome.runtime.lastError.message || chrome.runtime.lastError) : 'tab-missing';
+          if (sendResponse) sendResponse({ ok: false, error: err });
+          return;
+        }
+        const url = tab.url || tab.pendingUrl || null;
+        resetTabSession(tabId, url);
+        if (sendResponse) sendResponse({ ok: true });
+      });
+      return true; // async
+    }
+    case "getTabSession": {
+      const tabId = typeof msg.tabId === 'number' ? msg.tabId : (sender?.tab?.id ?? null);
+      if (typeof tabId !== 'number') {
+        sendResponse({ tabId: null, sessionId: null, url: null });
+        return false;
+      }
+      getOrCreateTabSession(tabId).then((session) => {
+        sendResponse({
+          tabId,
+          sessionId: session?.sessionId || null,
+          url: session?.url || null,
+        });
+      }).catch(() => {
+        sendResponse({ tabId, sessionId: null, url: null });
+      });
+      return true; // async
+    }
     case "getSystemPrompt": {
       sendResponse({ prompt: SYSTEM_PROMPT });
       return false;
@@ -664,9 +1080,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
     case "enableMicForTab": {
       if (typeof msg.tabId === "number") {
-        enableMicForTab(msg.tabId).then(() => {
+        enableMicForTab(msg.tabId).then(async () => {
           // Open/focus detached user popup when enabling via Admin panel
-          openOrFocusUserPopupForTabId(msg.tabId);
+          await openOrFocusUserPopupForTabId(msg.tabId);
           sendResponse({ ok: true });
         });
         return true; // async
@@ -689,13 +1105,61 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (sendResponse) sendResponse({ ok: false, error: 'invalid-input' });
         return false;
       }
+      const rawContext = Array.isArray(msg.context) ? msg.context : [];
+      const context = rawContext
+        .slice(0, TYPED_CONTEXT_LIMIT)
+        .map((entry) => {
+          const title = typeof entry?.title === 'string' ? entry.title.trim().slice(0, TYPED_CONTEXT_TITLE_LIMIT) : '';
+          const body = typeof entry?.body === 'string' ? entry.body.trim().slice(0, TYPED_CONTEXT_BODY_LIMIT) : '';
+          const preview = typeof entry?.preview === 'string' ? entry.preview.trim().slice(0, TYPED_CONTEXT_PREVIEW_LIMIT) : '';
+          const highlights = Array.isArray(entry?.highlights)
+            ? entry.highlights
+              .map((line) => (typeof line === 'string' ? line.trim().slice(0, TYPED_CONTEXT_HIGHLIGHT_LENGTH) : ''))
+              .filter(Boolean)
+              .slice(0, TYPED_CONTEXT_HIGHLIGHT_LIMIT)
+            : [];
+          const metaRaw = entry && typeof entry.meta === 'object' && entry.meta !== null ? entry.meta : null;
+          const images = Array.isArray(entry?.images)
+            ? entry.images
+              .slice(0, TYPED_CONTEXT_IMAGE_LIMIT)
+              .map((img) => {
+                const name = typeof img?.name === 'string' ? img.name.trim().slice(0, TYPED_CONTEXT_IMAGE_NAME_LIMIT) : '';
+                const dataUrlRaw = typeof img?.dataUrl === 'string' ? img.dataUrl.trim() : '';
+                const dataUrl = dataUrlRaw && /^data:image\//i.test(dataUrlRaw) && dataUrlRaw.length <= TYPED_CONTEXT_IMAGE_DATAURL_LIMIT
+                  ? dataUrlRaw
+                  : '';
+                if (!name && !dataUrl) return null;
+                const sanitized = {};
+                if (name) sanitized.name = name;
+                if (dataUrl) sanitized.dataUrl = dataUrl;
+                return sanitized;
+              })
+              .filter(Boolean)
+            : [];
+          if (!title && !body && !images.length) return null;
+          const payloadEntry = { title, body };
+          if (images.length) payloadEntry.images = images;
+          if (preview) payloadEntry.preview = preview;
+          if (highlights.length) payloadEntry.highlights = highlights;
+          if (metaRaw) {
+            const meta = {};
+            if (typeof metaRaw.createdAt === 'number' && Number.isFinite(metaRaw.createdAt)) meta.createdAt = metaRaw.createdAt;
+            if (typeof metaRaw.imageCount === 'number' && Number.isFinite(metaRaw.imageCount)) meta.imageCount = metaRaw.imageCount;
+            if (typeof metaRaw.hasBody === 'boolean') meta.hasBody = metaRaw.hasBody;
+            if (Object.keys(meta).length) payloadEntry.meta = meta;
+          }
+          return payloadEntry;
+        })
+        .filter(Boolean);
       ensureContentListener(tabId, (ok, err) => {
         if (!ok) {
           if (sendResponse) sendResponse({ ok: false, error: err || 'inject-failed' });
           return;
         }
         try {
-          chrome.tabs.sendMessage(tabId, { command: "userTypedInput", text: cleaned }, () => {
+          const payload = { command: "userTypedInput", text: cleaned };
+          if (context.length) payload.context = context;
+          chrome.tabs.sendMessage(tabId, payload, () => {
             const sendErr = chrome.runtime.lastError;
             if (sendResponse) {
               if (sendErr) {
@@ -707,6 +1171,48 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 }
               } else {
                 sendResponse({ ok: true });
+              }
+            }
+          });
+        } catch (e) {
+          if (sendResponse) sendResponse({ ok: false, error: e?.message || String(e) });
+        }
+      });
+      return true; // async
+    }
+    case "forceDomHighlightCleanup": {
+      const tabId = typeof msg.tabId === 'number' ? msg.tabId : null;
+      if (!tabId) {
+        if (sendResponse) sendResponse({ ok: false, error: 'invalid-tab' });
+        return false;
+      }
+      ensureContentListener(tabId, (ok) => {
+        if (ok) safeSend(tabId, { event: 'domHighlightForceCleanup' });
+        if (sendResponse) sendResponse({ ok });
+      });
+      return true; // async
+    }
+    case "captureDomHighlight": {
+      const tabId = typeof msg.tabId === 'number' ? msg.tabId : null;
+      if (!tabId) {
+        if (sendResponse) sendResponse({ ok: false, error: 'invalid-tab' });
+        return false;
+      }
+      ensureContentListener(tabId, (ok, err) => {
+        if (!ok) {
+          if (sendResponse) sendResponse({ ok: false, error: err || 'inject-failed' });
+          return;
+        }
+        try {
+          chrome.tabs.sendMessage(tabId, { command: "getDomHighlightSnippet" }, (resp) => {
+            const sendErr = chrome.runtime.lastError;
+            if (sendResponse) {
+              if (sendErr) {
+                sendResponse({ ok: false, error: String(sendErr.message || sendErr) });
+              } else if (!resp) {
+                sendResponse({ ok: false, error: 'no-response' });
+              } else {
+                sendResponse(resp);
               }
             }
           });
@@ -853,26 +1359,7 @@ chrome.contextMenus.onClicked.addListener((info) => {
       }
     });
   }
-  if (info.menuItemId === "heyNano.toggleDomHighlight") {
-    const toggleForTab = (tab) => {
-      if (!tab || typeof tab.id !== 'number') return;
-      const current = !!domHighlightTabs.get(tab.id);
-      const next = !current;
-      domHighlightTabs.set(tab.id, next);
-      try { chrome.storage.local.set({ htmlDomLayoutEnabled: next }); } catch {}
-      // Broadcast immediately so Admin badge updates
-      broadcastHtmlDomLayoutState(tab.id, next);
-      sendHtmlDomLayoutToTab(tab.id, next, () => {});
-    };
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const tab = (tabs || [])[0] || null;
-      if (tab) { toggleForTab(tab); return; }
-      if (typeof lastFocusedNormalWindowId === 'number') {
-        chrome.tabs.query({ windowId: lastFocusedNormalWindowId, active: true }, (t2) => toggleForTab((t2 || [])[0] || null));
-        return;
-      }
-    });
-  }
+
   // Removed dom lift reset menu option
 });
 
@@ -902,7 +1389,7 @@ chrome.commands.onCommand.addListener((command) => {
     } else {
       await enableMicForTab(tabId);
       // Open/focus detached user popup on hotkey enable
-      openOrFocusUserPopup(tab);
+      await openOrFocusUserPopup(tab);
     }
   });
 });

@@ -37,7 +37,18 @@
         };
 
         rec.onerror = (e) => {
+          const code = e && typeof e.error === 'string' ? e.error.toLowerCase() : '';
           try { if (typeof handlers.onError === 'function') handlers.onError(e); } catch {}
+          if (code === 'no-speech') {
+            // Treat as recoverable: keep session active and allow onend to restart.
+            try { if (typeof handlers.onState === 'function') handlers.onState('listening'); } catch {}
+            return;
+          }
+          active = false;
+          try { if (typeof handlers.onState === 'function') handlers.onState('error', e); } catch {}
+          try { if (typeof handlers.onStop === 'function') handlers.onStop(); } catch {}
+          try { rec.stop(); } catch {}
+          rec = null;
         };
 
         rec.onend = () => {
@@ -53,7 +64,13 @@
         active = true;
         try { if (typeof handlers.onStart === 'function') handlers.onStart(); } catch {}
         try { if (typeof handlers.onState === 'function') handlers.onState('listening'); } catch {}
-        try { rec.start(); } catch (e) {}
+        try { rec.start(); } catch (e) {
+          active = false;
+          try { if (typeof handlers.onError === 'function') handlers.onError(e); } catch {}
+          try { if (typeof handlers.onState === 'function') handlers.onState('error', e); } catch {}
+          try { rec.stop(); } catch {}
+          rec = null;
+        }
       }
 
       function stop() {

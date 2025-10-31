@@ -22,9 +22,7 @@ Hey Nano is a Chrome extension that keeps a single microphone session in sync ac
 
 ## Admin Panel Cheatsheet
 - **Enable/Disable Mic**: forces the active tab into the desired state.
-- **Open Tab**: launch a new tab from a URL or domain.
 - **List Tabs**: inspect IDs, titles, and urls for the current window.
-- **Highlight DOM/HTML**: overlay a grid and element outlines for quick inspection.
 
 ## Developer Notes
 - Voice commands live in `voice_commands.js`; extend the registry to add new intents.
